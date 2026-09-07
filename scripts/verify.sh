@@ -43,5 +43,6 @@ echo "battery:"
 curl -s -m 10 -G "http://$HOST:8428/api/v1/query" \
 	--data-urlencode 'query=node_power_supply_capacity{power_supply="qcom_qg"}' \
 	| sed -n 's/.*"value":\[[0-9.]*,"\([0-9]*\)"\].*/  capacity \1%/p'
+echo
 
 exit $fail

@@ -47,7 +47,10 @@ if [ -z "$SNAPSHOT" ]; then
 	exit 1
 fi
 install -d "$WORK/$NAME/victoria-metrics"
-tar -C "$VM_DATA/snapshots/$SNAPSHOT" -cf - . | tar -C "$WORK/$NAME/victoria-metrics" -xf -
+# -h is required: a snapshot's data/{small,big,indexdb} are symlinks into the
+# live data dir, and archiving the links instead of their contents produces a
+# backup that VictoriaMetrics refuses to start on.
+tar -h -C "$VM_DATA/snapshots/$SNAPSHOT" -cf - . | tar -C "$WORK/$NAME/victoria-metrics" -xf -
 curl -s "$VM_URL/snapshot/delete?authKey=$AUTHKEY&snapshot=$SNAPSHOT" >/dev/null
 SNAPSHOT=""
 
