@@ -1,0 +1,7 @@
+# Monitoring stack: allow LAN access to VictoriaMetrics/vmalert/Grafana/Alertmanager/node-exporter.
+# Rendered by scripts/setup.sh from LAN_CIDR (see versions.env / env override).
+table inet filter {
+	chain input {
+		ip saddr __LAN_CIDR__ tcp dport { 3000, 8428, 8880, 9093, 9100 } accept comment "monitoring stack (LAN only)"
+	}
+}

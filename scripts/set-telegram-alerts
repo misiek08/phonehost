@@ -1,0 +1,48 @@
+#!/bin/sh
+# Enable Telegram delivery in Alertmanager.
+# Usage: set-telegram-alerts <bot_token> <chat_id>
+set -eu
+
+if [ "$(id -u)" != 0 ]; then
+	echo "run as root (sudo set-telegram-alerts ...)" >&2
+	exit 1
+fi
+if [ $# -ne 2 ]; then
+	echo "usage: set-telegram-alerts <bot_token> <chat_id>" >&2
+	exit 1
+fi
+
+TOKEN=$1
+CHAT_ID=$2
+TMPL=/etc/alertmanager/alertmanager.telegram.tmpl
+CONF=/etc/alertmanager/alertmanager.yml
+
+case "$CHAT_ID" in
+	-[0-9]*|[0-9]*) ;;
+	*) echo "chat_id must be numeric (may be negative for groups)" >&2; exit 1 ;;
+esac
+
+printf '%s' "$TOKEN" > /etc/alertmanager/telegram_token
+chown root:prometheus /etc/alertmanager/telegram_token
+chmod 640 /etc/alertmanager/telegram_token
+
+sed "s|__CHAT_ID__|$CHAT_ID|" "$TMPL" > "$CONF.new"
+chown root:prometheus "$CONF.new"
+chmod 644 "$CONF.new"
+
+if amtool check-config "$CONF.new" >/dev/null 2>&1 || alertmanager --config.file="$CONF.new" --help >/dev/null 2>&1; then
+	:
+fi
+mv "$CONF.new" "$CONF"
+rc-service alertmanager restart
+sleep 2
+rc-service alertmanager status
+
+echo
+echo "Sending test alert to Telegram..."
+NOW=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
+curl -sS -XPOST http://127.0.0.1:9093/api/v2/alerts -H 'Content-Type: application/json' -d "[{
+  \"labels\": {\"alertname\": \"TelegramSetupTest\", \"severity\": \"info\", \"instance\": \"note9pro\"},
+  \"annotations\": {\"summary\": \"Alertmanager Telegram delivery configured\"},
+  \"startsAt\": \"$NOW\"
+}]" && echo " -> queued (arrives within ~30s)"

@@ -1,0 +1,19 @@
+# Rendered by scripts/setup.sh - __GRAFANA_ADMIN_PASSWORD__ is substituted there.
+# Do not commit the rendered file; it contains the admin password.
+GRAFANA_HOME=/var/lib/grafana
+GRAFANA_OPTS="-config /etc/grafana.ini -homepath /usr/share/grafana
+cfg:paths.data=$GRAFANA_HOME/data
+cfg:paths.plugins=$GRAFANA_HOME/plugins
+cfg:paths.provisioning=$GRAFANA_HOME/provisioning
+cfg:server.http_addr=0.0.0.0
+cfg:server.http_port=3000
+cfg:server.enable_gzip=true
+cfg:security.admin_user=admin
+cfg:security.admin_password=__GRAFANA_ADMIN_PASSWORD__
+cfg:analytics.reporting_enabled=false
+cfg:analytics.check_for_updates=false
+cfg:news.news_feed_enabled=false
+cfg:unified_alerting.enabled=false
+cfg:alerting.enabled=false
+cfg:log.mode=syslog"
+rc_need=logger

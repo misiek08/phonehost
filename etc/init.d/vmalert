@@ -1,0 +1,21 @@
+#!/sbin/openrc-run
+
+name="vmalert"
+description="VictoriaMetrics alerting rule executor"
+
+command="/usr/bin/vmalert"
+command_args="$vmalert_opts"
+command_user=victoriametrics:victoriametrics
+command_background=yes
+pidfile="/run/$RC_SVCNAME.pid"
+
+depend() {
+	need net
+	after victoria-metrics alertmanager firewall
+}
+
+start_pre() {
+	if [ -n "$error_log" ]; then
+		checkpath -f -o $command_user "$error_log"
+	fi
+}

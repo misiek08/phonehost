@@ -1,0 +1,14 @@
+# Daemon options. See "vmalert -help" for the full list.
+vmalert_opts="-rule=/etc/victoria-metrics/alerts/*.yml
+ -datasource.url=http://127.0.0.1:8428
+ -remoteWrite.url=http://127.0.0.1:8428
+ -remoteRead.url=http://127.0.0.1:8428
+ -notifier.url=http://127.0.0.1:9093
+ -httpListenAddr=0.0.0.0:8880
+ -evaluationInterval=30s
+ -rule.resendDelay=5m
+ -external.label=host=note9pro
+ -external.url=http://192.168.1.79:3000
+ -loggerLevel=INFO"
+
+error_log="/var/log/vmalert.log"

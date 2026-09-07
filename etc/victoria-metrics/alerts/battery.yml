@@ -1,0 +1,59 @@
+groups:
+  - name: battery
+    interval: 30s
+    rules:
+      # Kernel has no charger driver (pm6150 SMB5 not exposed), so the 80% cap
+      # cannot be enforced in sysfs. These rules are the software substitute.
+      - alert: BatteryAbove80
+        expr: node_power_supply_capacity{power_supply="qcom_qg"} > 80
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Battery at {{ $value }}% - above the 80% target"
+          description: "No kernel charge limit available; unplug the charger or cut mains power to the charger."
+
+      - alert: BatteryFull
+        expr: node_power_supply_capacity{power_supply="qcom_qg"} >= 100
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Battery held at 100% for 30m - accelerated wear"
+
+      # qcom_qg reports the raw gauge ADC sign (negative = charging on this
+      # platform), so mains loss is detected from the capacity trend instead,
+      # which is sign-agnostic.
+      - alert: MainsPowerLost
+        expr: node_power_supply_capacity{power_supply="qcom_qg"} - (node_power_supply_capacity{power_supply="qcom_qg"} offset 30m) <= -3
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Battery draining - mains power likely lost"
+          description: "Charge level dropped {{ $value }} points over the last 30 minutes."
+
+      - alert: BatteryLow
+        expr: node_power_supply_capacity{power_supply="qcom_qg"} < 25
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Battery {{ $value }}%"
+
+      - alert: BatteryCritical
+        expr: node_power_supply_capacity{power_supply="qcom_qg"} < 10
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Battery {{ $value }}% - shutdown imminent"
+
+      - alert: BatteryTempHigh
+        expr: node_power_supply_temp_celsius{power_supply="qcom_qg"} > 42
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Battery at {{ $value | printf \"%.1f\" }} C"
+
+      - alert: BatteryHealthDegraded
+        expr: 100 * node_power_supply_charge_full{power_supply="qcom_qg"} / node_power_supply_charge_full_design{power_supply="qcom_qg"} < 80
+        for: 6h
+        labels: {severity: info}
+        annotations:
+          summary: "Battery capacity at {{ $value | printf \"%.0f\" }}% of design"

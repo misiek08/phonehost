@@ -1,0 +1,45 @@
+groups:
+  - name: monitoring-selfcheck
+    interval: 30s
+    rules:
+      - alert: VMFreeDiskLow
+        expr: vm_free_disk_space_bytes < 5e9
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "VictoriaMetrics data dir has {{ $value | humanize1024 }}B free"
+
+      - alert: VMRowsIgnored
+        expr: sum without(reason) (rate(vm_rows_ignored_total[10m])) > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "VictoriaMetrics ignoring rows ({{ $labels.reason }})"
+
+      - alert: VMScrapeErrors
+        expr: sum(rate(vm_promscrape_scrapes_failed_total[10m])) > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Scrape failures in VictoriaMetrics promscrape"
+
+      - alert: VmalertExecutionErrors
+        expr: sum(rate(vmalert_execution_errors_total[10m])) > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "vmalert rule evaluation errors"
+
+      - alert: VmalertNotifierErrors
+        expr: sum(rate(vmalert_alerts_send_errors_total[10m])) > 0
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "vmalert cannot deliver alerts to Alertmanager"
+
+      - alert: AlertmanagerNotificationsFailing
+        expr: sum without(integration) (rate(alertmanager_notifications_failed_total[10m])) > 0
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "Alertmanager delivery failing ({{ $labels.integration }})"

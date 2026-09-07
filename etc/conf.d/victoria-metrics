@@ -1,0 +1,17 @@
+# Home variable is used by init.d script to precreate db dir with correct user.
+victoriametrics_home=/var/lib/victoria-metrics
+
+# Daemon options. See "victoria-metrics -help" for list.
+victoriametrics_opts="-storageDataPath $victoriametrics_home
+ -httpListenAddr 0.0.0.0:8428
+ -retentionPeriod 12
+ -memory.allowedPercent 25
+ -promscrape.config /etc/victoria-metrics/scrape.yml
+ -promscrape.configCheckInterval 30s
+ -selfScrapeInterval 30s
+ -snapshotAuthKey=file:///etc/victoria-metrics/snapshot.key
+ -deleteAuthKey=file:///etc/victoria-metrics/delete.key
+ -loggerLevel INFO"
+
+error_log="/var/log/victoriametrics.log"
+retry=30

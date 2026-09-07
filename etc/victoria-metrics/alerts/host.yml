@@ -1,0 +1,83 @@
+groups:
+  - name: host
+    interval: 30s
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 3m
+        labels: {severity: critical}
+        annotations:
+          summary: "Target {{ $labels.job }} ({{ $labels.instance }}) is down"
+          description: "Scrape target has been unreachable for 3 minutes."
+
+      - alert: HostRebooted
+        expr: time() - node_boot_time_seconds < 300
+        labels: {severity: info}
+        annotations:
+          summary: "note9pro rebooted"
+          description: "Uptime is {{ $value | humanizeDuration }}."
+
+      - alert: HostHighCpu
+        expr: 100 * (1 - avg without(cpu, mode) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 85
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "CPU busy {{ $value | printf \"%.0f\" }}% for 15m"
+
+      - alert: HostHighLoad
+        expr: node_load5 > 2 * count without(cpu, mode) (node_cpu_seconds_total{mode="idle"})
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "load5 {{ $value | printf \"%.2f\" }} exceeds 2x core count"
+
+      - alert: HostLowMemory
+        expr: 100 * node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 10
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Only {{ $value | printf \"%.1f\" }}% RAM available"
+
+      - alert: HostOutOfMemoryImminent
+        expr: 100 * node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 4
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "RAM nearly exhausted ({{ $value | printf \"%.1f\" }}% available)"
+
+      - alert: HostDiskLow
+        expr: 100 * node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|ramfs|squashfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|ramfs|squashfs"} < 15
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.mountpoint }} has {{ $value | printf \"%.1f\" }}% free"
+
+      - alert: HostDiskWillFillIn24h
+        expr: |
+          predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|ramfs|squashfs"}[6h], 24 * 3600) < 0
+          and node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|ramfs|squashfs"} / node_filesystem_size_bytes < 0.4
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.mountpoint }} projected full within 24h"
+
+      - alert: HostSocTempHigh
+        expr: max without(chip, sensor) (node_hwmon_temp_celsius{chip=~"thermal_thermal_zone.*"}) > 70
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "SoC thermal zone at {{ $value | printf \"%.1f\" }} C"
+
+      - alert: HostSocTempCritical
+        expr: max without(chip, sensor) (node_hwmon_temp_celsius{chip=~"thermal_thermal_zone.*"}) > 85
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "SoC thermal zone at {{ $value | printf \"%.1f\" }} C - throttling/shutdown risk"
+
+      - alert: HostSwapHeavyUse
+        expr: node_memory_SwapTotal_bytes > 0 and 100 * (1 - node_memory_SwapFree_bytes / node_memory_SwapTotal_bytes) > 80
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "zram swap {{ $value | printf \"%.0f\" }}% used"

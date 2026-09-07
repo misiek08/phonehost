@@ -1,0 +1,10 @@
+# rendered on the phone, contains the admin password
+etc/conf.d/grafana
+etc/nftables.d/60_monitoring.nft
+# backups contain secrets and data
+backups/
+*.tar.gz
+# dev build output
+dev/hello-go/hello
+dev/hello-cs/bin/
+dev/hello-cs/obj/
