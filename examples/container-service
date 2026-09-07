@@ -1,0 +1,37 @@
+#!/sbin/openrc-run
+# Template for running one of your own containers as a service, with limits the
+# kernel enforces regardless of rootless podman's own cgroup support.
+#
+#   sudo install -m 755 examples/container-service /etc/init.d/myservice
+#   sudo install -m 644 examples/container-service.conf /etc/conf.d/myservice
+#   sudo rc-update add myservice default
+#   sudo rc-service myservice start
+#
+# The container runs rootless as $command_user; OpenRC creates the service's
+# cgroup (/sys/fs/cgroup/openrc.myservice) and applies rc_cgroup_settings from
+# /etc/conf.d/myservice to it, so memory/cpu/pids caps hold for the whole
+# container tree.
+
+supervisor=supervise-daemon
+
+name="my container service"
+description="example rootless podman container under OpenRC"
+
+: ${container_image:=localhost/hello-go}
+: ${container_user:=user}
+: ${container_args:=}
+
+command=/usr/bin/podman
+command_args="run --rm --replace --name $RC_SVCNAME $container_args $container_image"
+command_user="$container_user:$container_user"
+pidfile="/run/$RC_SVCNAME.pid"
+
+depend() {
+	need net
+	after podman
+}
+
+stop_post() {
+	# podman --rm cleans up on exit, but a killed conmon can leave the name
+	su "$container_user" -s /bin/sh -c "podman rm -f $RC_SVCNAME" >/dev/null 2>&1 || true
+}

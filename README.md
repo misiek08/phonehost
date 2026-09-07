@@ -139,9 +139,64 @@ Two things to know:
   accepting all input from `docker*` interfaces. It is inert here — rootless podman
   has no bridge and rootful netavark names its bridge `podman0` — but it would open
   up any interface actually named `docker*`.
-* **No cgroup resource limits when rootless.** There is no cgroup v2 delegation for
-  the user (no logind, no `user.slice`), so `--memory`/`--cpus` will not work in
-  rootless mode. Run such a container rootful (`sudo podman ...`) if you need limits.
+* **Rootless resource limits need the delegated subtree below.** Out of the box
+  podman *silently ignores* `--memory`/`--cpus` when rootless here: it tries to
+  create its cgroups at the cgroup root (`mkdir /sys/fs/cgroup/conmon: permission
+  denied`) and then leaves the container in whatever cgroup it inherited.
+
+### Resource limits for rootless containers
+
+There is no `user.slice` on this host and there cannot be one: that is a systemd
+construct. elogind (which pmOS/Sxmo uses) is only the logind half — it puts each
+login in a session cgroup (`/c131`, owned by root, no controllers delegated) but
+has no unit manager, and it is systemd's `Delegate=` on `user@.service` that
+normally hands a user a writable subtree. sshd here also runs with `UsePAM no`,
+so a `pam_exec` hook would never fire for ssh logins.
+
+What works instead is an explicit delegation, which `make apply-podman` sets up:
+
+* `cgroup-delegate` (OpenRC service, `etc/init.d/cgroup-delegate`) creates
+  `/sys/fs/cgroup/deleg/u<uid>/{shell,containers}` at boot, enables
+  `+cpu +io +memory +pids` down the path and chowns the subtree to the user. The
+  two children exist because a cgroup may hold either processes or enabled
+  controllers, never both.
+* `cg-attach` (`/usr/local/sbin`) moves one of your own processes into
+  `deleg/u<uid>/shell`. This needs root: cgroup v2 delegation containment refuses
+  a move whose common ancestor with the source is the (root-owned) cgroup root.
+  The helper refuses any pid the caller does not own.
+* `/etc/profile.d/cgroup-delegate.sh` exports `PODMAN_CGROUP_PARENT` and tries
+  `sudo -n cg-attach $$`, staying silent if that needs a password.
+
+So per login shell:
+
+    sudo cg-attach $$
+    podman run --rm --cgroup-parent="$PODMAN_CGROUP_PARENT" \
+        --memory=200m --cpus=0.5 --pids-limit=64 alpine:3.22 ...
+
+Verified inside such a container: `memory.max 209715200`, `cpu.max 50000 100000`,
+`pids.max 64`, and a 400 MB write into `/dev/shm` gets killed at the 200 MB cap.
+
+To skip the manual `cg-attach` on every login, add a passwordless rule for that
+one helper — your call, it is not installed by default:
+
+    echo 'user ALL=(root) NOPASSWD: /usr/local/sbin/cg-attach' \
+        | sudo tee /etc/sudoers.d/cg-attach
+    sudo chmod 440 /etc/sudoers.d/cg-attach
+
+### Limits without any of that
+
+For containers you actually deploy, run them as OpenRC services and let OpenRC
+apply the limits — no delegation, no flags, works for rootless containers:
+
+    sudo install -m 755 examples/container-service /etc/init.d/myservice
+    sudo install -m 644 examples/container-service.conf /etc/conf.d/myservice
+    sudo rc-update add myservice default && sudo rc-service myservice start
+
+`rc_cgroup_settings` in `/etc/conf.d/myservice` is written to the service's own
+cgroup, so it covers podman, conmon and the container together. Verified: the
+container process lands in `/sys/fs/cgroup/openrc.myservice` with
+`memory.max 209715200`, `pids.max 64`, `cpu.max 50000 100000` — and the container
+sees the same value from the inside.
 
 ## Why not Docker
 

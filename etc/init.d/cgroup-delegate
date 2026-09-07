@@ -1,0 +1,57 @@
+#!/sbin/openrc-run
+
+name="cgroup delegation"
+description="Delegate a cgroup v2 subtree per user so rootless podman can apply resource limits"
+
+: ${cgroup_delegate_root:=/sys/fs/cgroup/deleg}
+: ${cgroup_delegate_users:=user}
+: ${cgroup_delegate_controllers:=+cpu +io +memory +pids}
+
+depend() {
+	need cgroups
+	before podman
+}
+
+start() {
+	ebegin "Delegating cgroup subtrees ($cgroup_delegate_users)"
+
+	if [ ! -f /sys/fs/cgroup/cgroup.controllers ]; then
+		eend 1 "cgroups v2 is not mounted at /sys/fs/cgroup"
+		return 1
+	fi
+
+	mkdir -p "$cgroup_delegate_root"
+	# make the controllers available to the per-user cgroups below
+	if ! echo "$cgroup_delegate_controllers" > "$cgroup_delegate_root/cgroup.subtree_control"; then
+		eend 1 "cannot enable $cgroup_delegate_controllers on $cgroup_delegate_root"
+		return 1
+	fi
+
+	for u in $cgroup_delegate_users; do
+		uid=$(id -u "$u" 2>/dev/null) || { ewarn "unknown user $u"; continue; }
+		d=$cgroup_delegate_root/u$uid
+		mkdir -p "$d/shell" "$d/containers"
+		# controllers for the user's own children; possible only while $d holds
+		# no processes of its own, which is why shell/ and containers/ exist
+		echo "$cgroup_delegate_controllers" > "$d/cgroup.subtree_control" 2>/dev/null ||
+			ewarn "cannot enable controllers on $d"
+		chown -R "$u" "$d"
+		einfo "$d delegated to $u"
+	done
+
+	eend 0
+}
+
+stop() {
+	ebegin "Removing delegated cgroup subtrees"
+	for u in $cgroup_delegate_users; do
+		uid=$(id -u "$u" 2>/dev/null) || continue
+		d=$cgroup_delegate_root/u$uid
+		# only empty cgroups can be removed; leave anything still in use alone
+		find "$d" -depth -type d 2>/dev/null | while read -r dir; do
+			rmdir "$dir" 2>/dev/null || true
+		done
+	done
+	rmdir "$cgroup_delegate_root" 2>/dev/null || true
+	eend 0
+}

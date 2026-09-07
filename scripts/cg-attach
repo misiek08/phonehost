@@ -1,0 +1,33 @@
+#!/bin/sh
+# Move one of your own processes into your delegated cgroup subtree, so that
+# rootless podman can create limited container cgroups next to it.
+#
+#   sudo cg-attach $$        # move the current shell
+#
+# Root is needed because cgroup v2 delegation containment forbids moving a
+# process into a subtree whose common ancestor with its current cgroup is the
+# cgroup root. Only processes owned by the caller can be moved, and only into
+# that caller's own subtree.
+set -eu
+
+PID=${1:-}
+[ -n "$PID" ] || { echo "usage: cg-attach <pid>" >&2; exit 1; }
+case $PID in
+	*[!0-9]*) echo "cg-attach: pid must be numeric" >&2; exit 1 ;;
+esac
+[ -d "/proc/$PID" ] || { echo "cg-attach: no such process: $PID" >&2; exit 1; }
+
+owner=$(stat -c %u "/proc/$PID")
+caller=${SUDO_UID:-$(id -u)}
+if [ "$owner" != "$caller" ]; then
+	echo "cg-attach: refusing, pid $PID belongs to uid $owner, not $caller" >&2
+	exit 1
+fi
+
+target=/sys/fs/cgroup/deleg/u$owner/shell
+if [ ! -d "$target" ]; then
+	echo "cg-attach: $target missing - is the cgroup-delegate service running?" >&2
+	exit 1
+fi
+
+echo "$PID" > "$target/cgroup.procs"

@@ -1,0 +1,8 @@
+# Users that get a delegated cgroup v2 subtree (space separated).
+cgroup_delegate_users="user"
+
+# Where the delegated subtrees live.
+#cgroup_delegate_root="/sys/fs/cgroup/deleg"
+
+# Controllers made available inside each user's subtree.
+#cgroup_delegate_controllers="+cpu +io +memory +pids"

@@ -8,6 +8,7 @@
 #   PIN=1                          install the exact versions from versions.env
 #   SKIP_PKGS=1                    do not touch apk at all
 #   WITH_DEV=1                     also install go/dotnet/gcc toolchains
+#   WITH_PODMAN=1                  also set up rootless podman + cgroup delegation
 set -eu
 
 SRC=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -170,6 +171,18 @@ if [ "${WITH_PODMAN:-0}" = 1 ]; then
 
 	install -m 644 "$SRC/etc/conf.d/podman" /etc/conf.d/podman
 	rc-update add podman default >/dev/null 2>&1 || true
+
+	# Delegated cgroup v2 subtree: without it rootless podman silently ignores
+	# --memory/--cpus/--pids-limit (there is no systemd user manager here).
+	install -m 755 "$SRC/etc/init.d/cgroup-delegate" /etc/init.d/cgroup-delegate
+	install -m 644 "$SRC/etc/conf.d/cgroup-delegate" /etc/conf.d/cgroup-delegate
+	install -d -m 755 /usr/local/sbin
+	install -m 755 "$SRC/scripts/cg-attach" /usr/local/sbin/cg-attach
+	install -m 644 "$SRC/scripts/profile.d/cgroup-delegate.sh" \
+		/etc/profile.d/cgroup-delegate.sh
+	rc-update add cgroup-delegate default >/dev/null 2>&1 || true
+	rc-service cgroup-delegate restart >/dev/null 2>&1 || \
+		rc-service cgroup-delegate start >/dev/null 2>&1 || true
 
 	su "$PODMAN_USER" -s /bin/sh -c 'podman system migrate' >/dev/null 2>&1 || true
 	rc-service podman restart >/dev/null 2>&1 || rc-service podman start >/dev/null 2>&1 || true
