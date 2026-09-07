@@ -1,0 +1,12 @@
+# Multi-stage rootless build:  podman build -t hello-go dev/hello-go
+FROM docker.io/library/golang:1.27-alpine AS build
+WORKDIR /src
+COPY go.mod .
+COPY main.go .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /hello .
+
+FROM scratch
+COPY --from=build /hello /hello
+# The battery lives in the host's sysfs, so run with:
+#   podman run --rm -v /sys/class/power_supply:/sys/class/power_supply:ro hello-go
+ENTRYPOINT ["/hello"]

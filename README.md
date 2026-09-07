@@ -32,6 +32,9 @@ Requires an ssh alias `phone` (or `make SSH_HOST=...`). Privileged targets use
 
     make apply        # push configs and (re)install the stack
     make apply-dev    # same, plus go / .NET SDK / gcc / git / tmux
+    make apply-podman # same, plus rootless podman
+    make apply-all    # stack + toolchains + podman
+    make images       # build the sample Go and C# container images on the phone
     make verify       # health-check endpoints, scrape targets, battery
     make status       # runlevel, listening sockets, memory, disk
     make diff         # show drift between repo and phone
@@ -93,6 +96,53 @@ drops `/etc/profile.d/dev-toolchains.sh` (GOPATH, DOTNET_ROOT, telemetry off).
 Samples that read the battery from sysfs live in `dev/`. The .NET RID on Alpine is
 `linux-musl-arm64`, not `linux-arm64`.
 
+## Containers: rootless podman
+
+`make apply-podman` installs podman 6.1 with crun, netavark/aardvark-dns, pasta and
+fuse-overlayfs, and configures what rootless mode needs on this host:
+
+* subuid/subgid ranges for the `user` account (`user:100000:65536`) — without them
+  podman falls back to a single-uid mapping and many images break;
+* `fuse` and `overlay` in `/etc/modules-load.d/podman.conf` (both are modules here);
+* `mount --make-rshared /` via `/etc/local.d/10-podman-shared-mount.start`, which
+  silences the "/ is not a shared mount" warning on every run;
+* `etc/conf.d/podman` with `podman_user=user`, so the OpenRC `podman` service runs
+  the API socket unprivileged.
+
+Autostart for your own services comes from that service: its `start_post` calls
+`start_containers`, so anything created with a restart policy comes up at boot.
+
+    podman run -d --restart=always --name myservice localhost/myservice
+    sudo rc-service podman start_containers   # bring them up without rebooting
+
+`podman-docker` provides a `docker` command alias and `podman-compose` is installed.
+
+`make images` builds the two samples in `dev/` on the phone:
+
+| Image | Base | Size |
+|---|---|---|
+| `localhost/hello-go` | multi-stage `golang:1.27-alpine` → `scratch` | 1.58 MB |
+| `localhost/hello-cs` | `dotnet/sdk:9.0-alpine` → `dotnet/runtime:9.0-alpine` | 96.3 MB |
+
+Both read the battery from sysfs, so run them with it mounted:
+
+    podman run --rm -v /sys/class/power_supply:/sys/class/power_supply:ro localhost/hello-go
+
+Two things to know:
+
+* **Published ports are not opened in the firewall.** Rootless podman uses
+  `rootlessport`/pasta and creates no nft table or chain of its own, so the host's
+  `policy drop` input chain still blocks published ports. Expose a container
+  deliberately by extending `etc/nftables.d/60_monitoring.nft.tmpl`.
+  Installing podman does pull in `postmarketos-config-nftables-docker` (an
+  install_if of the pmOS nftables config), which drops `/etc/nftables.d/51_docker.nft`
+  accepting all input from `docker*` interfaces. It is inert here — rootless podman
+  has no bridge and rootful netavark names its bridge `podman0` — but it would open
+  up any interface actually named `docker*`.
+* **No cgroup resource limits when rootless.** There is no cgroup v2 delegation for
+  the user (no logind, no `user.slice`), so `--memory`/`--cpus` will not work in
+  rootless mode. Run such a container rootful (`sudo podman ...`) if you need limits.
+
 ## Why not Docker
 
 The kernel would support it (cgroup v2, `CONFIG_VETH/BRIDGE/BRIDGE_NETFILTER/NF_NAT/OVERLAY_FS`
@@ -109,5 +159,6 @@ goal that motivated it is served better:
 * node_exporter needs host `/proc`, `/sys`, network and PID namespaces anyway, so
   it would stay outside — a hybrid, not a clean compose file.
 
-Containers still make sense for deploying your own Go/C# services later; podman
-is the better fit there since it has no daemon and no firewall rules of its own.
+Containers still make sense for deploying your own Go/C# services, which is why
+rootless podman is installed alongside the stack — no daemon, and no firewall
+rules of its own.

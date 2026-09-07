@@ -1,0 +1,4 @@
+#!/bin/sh
+# Rootless podman needs "/" to be a shared mount, otherwise every run warns
+# 'is not a shared mount, this could cause issues or missing mounts'.
+mount --make-rshared /

@@ -1,0 +1,13 @@
+# Multi-stage rootless build:  podman build -t hello-cs dev/hello-cs
+FROM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS build
+WORKDIR /src
+COPY hello-cs.csproj .
+RUN dotnet restore -r linux-musl-arm64
+COPY Program.cs .
+RUN dotnet publish -c Release -r linux-musl-arm64 --no-self-contained -o /app
+
+FROM mcr.microsoft.com/dotnet/runtime:9.0-alpine
+WORKDIR /app
+COPY --from=build /app .
+# See the note in hello-go/Containerfile about mounting the host's sysfs.
+ENTRYPOINT ["dotnet", "/app/hello-cs.dll"]

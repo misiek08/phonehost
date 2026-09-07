@@ -1,0 +1,17 @@
+# Configuration for /etc/init.d/podman
+#
+# Running the API service as an unprivileged user keeps every container
+# rootless. The service's start_containers command brings up containers created
+# with --restart=always / --restart=unless-stopped, which is how you autostart
+# your own services on this host:
+#
+#   podman run -d --restart=always --name myservice localhost/myservice
+#   sudo rc-service podman start_containers      # or just reboot
+#
+podman_user=user
+
+# See podman-system-service(1) for options.
+#podman_opts="--time 0"
+
+# API endpoint in URI form. Leave empty to use defaults.
+#podman_uri=""

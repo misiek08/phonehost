@@ -11,12 +11,15 @@ BACKUPS  ?= backups
 SSH  := ssh $(SSH_HOST)
 SSHT := ssh -t $(SSH_HOST)
 
-.PHONY: help push apply apply-dev verify status logs backup restore telegram rotate-grafana-password diff shell
+.PHONY: help push apply apply-dev apply-podman apply-all images verify status logs backup restore telegram rotate-grafana-password diff shell
 
 help:
 	@echo 'push                     copy this repo to $(SSH_HOST):$(REMOTE)'
 	@echo 'apply                    push + run setup.sh (stack only)'
 	@echo 'apply-dev                push + run setup.sh with go/.NET toolchains'
+	@echo 'apply-podman             push + set up rootless podman'
+	@echo 'apply-all                push + stack + toolchains + podman'
+	@echo 'images                   build the sample Go and C# container images on the phone'
 	@echo 'verify                   health-check every endpoint and scrape target'
 	@echo 'status                   rc-status + listening sockets + memory'
 	@echo 'logs                     tail the stack logs'
@@ -38,6 +41,19 @@ apply: push
 
 apply-dev: push
 	@$(SSHT) 'sudo env WITH_DEV=1 sh $(REMOTE)/scripts/setup.sh'
+
+apply-podman: push
+	@$(SSHT) 'sudo env WITH_PODMAN=1 SKIP_PKGS=$(SKIP_PKGS) sh $(REMOTE)/scripts/setup.sh'
+
+apply-all: push
+	@$(SSHT) 'sudo env WITH_DEV=1 WITH_PODMAN=1 sh $(REMOTE)/scripts/setup.sh'
+
+images: push
+	@$(SSH) 'cd $(REMOTE)/dev/hello-go && podman build -t hello-go .' >/dev/null
+	@$(SSH) 'cd $(REMOTE)/dev/hello-cs && podman build -t hello-cs .' >/dev/null
+	@$(SSH) 'podman images --format "  {{.Repository}}:{{.Tag}}  {{.Size}}" | head -5'
+	@echo 'run them with the host battery visible:'
+	@echo '  ssh $(SSH_HOST) "podman run --rm -v /sys/class/power_supply:/sys/class/power_supply:ro localhost/hello-go"'
 
 verify:
 	@HOST=$(HOST_IP) sh scripts/verify.sh

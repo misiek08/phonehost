@@ -40,6 +40,20 @@ if [ "${SKIP_PKGS:-0}" != 1 ]; then
 	fi
 	apk add --quiet sqlite curl "$@"
 
+	if [ "${WITH_PODMAN:-0}" = 1 ]; then
+		log "podman packages"
+		if [ "${PIN:-0}" = 1 ]; then
+			apk add --quiet "podman=$PODMAN_VER" "podman-docker=$PODMAN_VER" \
+				"podman-openrc=$PODMAN_VER" "podman-compose=$PODMAN_COMPOSE_VER" \
+				crun netavark aardvark-dns fuse-overlayfs passt slirp4netns \
+				shadow-subids catatonit
+		else
+			apk add --quiet podman podman-docker podman-openrc podman-compose \
+				crun netavark aardvark-dns fuse-overlayfs passt slirp4netns \
+				shadow-subids catatonit
+		fi
+	fi
+
 	if [ "${WITH_DEV:-0}" = 1 ]; then
 		log "dev toolchains"
 		if [ "${PIN:-0}" = 1 ]; then
@@ -130,6 +144,36 @@ sed "s|__LAN_CIDR__|$LAN_CIDR|" "$SRC/etc/nftables.d/60_monitoring.nft.tmpl" \
 chmod 644 /etc/nftables.d/60_monitoring.nft
 nft -c -f /etc/nftables.nft
 rc-service nftables restart >/dev/null
+
+# ---------------------------------------------------------------- podman
+if [ "${WITH_PODMAN:-0}" = 1 ]; then
+	PODMAN_USER=${PODMAN_USER:-user}
+	log "podman rootless setup for $PODMAN_USER"
+
+	# subuid/subgid ranges: without them podman falls back to a single-uid
+	# mapping and many images break
+	for f in /etc/subuid /etc/subgid; do
+		[ -f "$f" ] || : > "$f"
+		grep -q "^$PODMAN_USER:" "$f" || echo "$PODMAN_USER:100000:65536" >> "$f"
+		chmod 644 "$f"
+	done
+
+	# fuse-overlayfs storage and the overlay driver are modules here
+	printf 'fuse\noverlay\n' > /etc/modules-load.d/podman.conf
+	modprobe fuse 2>/dev/null || true
+	modprobe overlay 2>/dev/null || true
+
+	install -m 755 "$SRC/scripts/local.d/10-podman-shared-mount.start" \
+		/etc/local.d/10-podman-shared-mount.start
+	sh /etc/local.d/10-podman-shared-mount.start
+	rc-update add local default >/dev/null 2>&1 || true
+
+	install -m 644 "$SRC/etc/conf.d/podman" /etc/conf.d/podman
+	rc-update add podman default >/dev/null 2>&1 || true
+
+	su "$PODMAN_USER" -s /bin/sh -c 'podman system migrate' >/dev/null 2>&1 || true
+	rc-service podman restart >/dev/null 2>&1 || rc-service podman start >/dev/null 2>&1 || true
+fi
 
 # ---------------------------------------------------------------- dev env
 if [ "${WITH_DEV:-0}" = 1 ]; then
