@@ -42,6 +42,8 @@ Requires an ssh alias `phone` (or `make SSH_HOST=...`). Privileged targets use
     make restore F=backups/phonehost-note9pro-<stamp>.tar.gz
     make telegram C=<chat_id> TOKENFILE=<file>
     make rotate-grafana-password
+    make poweroff-check   # dry-run the shutdown checks
+    make poweroff         # restore charging, flush, power off
 
 Telegram alerting is live: Alertmanager posts to the private channel through a
 bot, with the token in `/etc/alertmanager/telegram_token` (0640 root:prometheus)
@@ -65,6 +67,29 @@ VictoriaMetrics `/snapshot*` and delete-series endpoints (they are LAN-reachable
 Pin package versions to the ones recorded in `versions.env`:
 
     make push && ssh -t phone 'sudo env PIN=1 sh /home/user/phonehost/scripts/setup.sh'
+
+## Shutting it down
+
+Use `sudo poweroff` (busybox, and `/etc/inittab` has `::shutdown:/sbin/openrc
+shutdown`, so init runs the OpenRC shutdown runlevel and services stop in
+dependency order). **Never `poweroff -f`** - that calls `reboot(2)` directly,
+skipping init entirely: no service stop, no read-only remount, and none of the
+charge-cap cleanup below.
+
+The thing that makes shutdown special on this host is not the filesystem, it is
+the charger. The cap works by clearing `CHARGING_ENABLE_CMD` in the PM6150, and
+the PMIC keeps that bit while the system is off - it stays powered so off-mode
+charging can work - so powering down while the cap holds `inhibit-charge` can
+leave the phone **not charging at all** until it is booted again. Stopping
+`chargecap` restores `auto`, and a clean `poweroff` does that for you.
+
+`make poweroff` (or `scripts/safe-poweroff.sh`) checks it instead of trusting
+it: stop chargecap, verify `charge_behaviour` really reads `auto`, refuse to
+continue otherwise (`--force` overrides), report the battery level, `sync`, then
+`poweroff`. `--dry-run` shows what it would do.
+
+There is no wake-on-LAN: after a shutdown only the power button brings the phone
+back.
 
 ## Backup and restore
 

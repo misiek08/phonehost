@@ -11,7 +11,7 @@ BACKUPS  ?= backups
 SSH  := ssh $(SSH_HOST)
 SSHT := ssh -t $(SSH_HOST)
 
-.PHONY: help push apply apply-dev apply-podman apply-chargecap apply-all images build-chargecap verify status logs backup restore telegram rotate-grafana-password diff shell
+.PHONY: help push apply apply-dev apply-podman apply-chargecap apply-all images build-chargecap verify status logs backup restore telegram rotate-grafana-password diff shell poweroff poweroff-check
 
 help:
 	@echo 'push                     copy this repo to $(SSH_HOST):$(REMOTE)'
@@ -30,6 +30,8 @@ help:
 	@echo 'telegram C=<chat_id> [TOKENFILE=f|T=<token>]   enable Telegram alerting'
 	@echo 'rotate-grafana-password  set a new random Grafana admin password'
 	@echo 'diff                     show config drift between repo and phone'
+	@echo 'poweroff-check           dry-run the safe shutdown checks'
+	@echo 'poweroff                 restore charging, flush, power off (power button to return)'
 
 # Binary data must not pass through a pty, so transfers use plain ssh into the
 # user's home; only the privileged steps allocate a tty for the sudo prompt.
@@ -121,6 +123,14 @@ diff:
 			echo 'in sync'; else echo 'DIFFERS'; fi; \
 	done
 	@echo '(grafana conf.d and nftables rule are rendered from templates, not compared)'
+
+# Powering off leaves the charge cap's inhibit bit in the PMIC unless chargecap
+# is stopped first, and there is no wake-on-LAN - see scripts/safe-poweroff.sh.
+poweroff-check: push
+	@$(SSHT) 'sudo sh $(REMOTE)/scripts/safe-poweroff.sh --dry-run'
+
+poweroff: push
+	@$(SSHT) 'sudo sh $(REMOTE)/scripts/safe-poweroff.sh'
 
 shell:
 	@$(SSHT) 'exec sh -l'
