@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -27,6 +28,8 @@ import (
 	"syscall"
 	"time"
 )
+
+const listenRetry = 15 * time.Second
 
 const (
 	behaviourAuto      = "auto"
@@ -286,12 +289,29 @@ func main() {
 		}
 	}()
 
+	// At boot this daemon can start before loopback is configured, so binding
+	// has to be retried - and it must never take the control loop down with it.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", metrics)
-	srv := &http.Server{Addr: cfg.listen, Handler: mux}
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("metrics server: %v", err)
+		logged := false
+		for {
+			ln, err := net.Listen("tcp", cfg.listen)
+			if err != nil {
+				if !logged {
+					log.Printf("metrics server: %v - retrying every %s", err, listenRetry)
+					logged = true
+				}
+				time.Sleep(listenRetry)
+				continue
+			}
+			log.Printf("metrics server listening on %s", cfg.listen)
+			logged = false
+			if err := (&http.Server{Handler: mux}).Serve(ln); err != nil &&
+				!errors.Is(err, http.ErrServerClosed) {
+				log.Printf("metrics server: %v - restarting", err)
+			}
+			time.Sleep(listenRetry)
 		}
 	}()
 
