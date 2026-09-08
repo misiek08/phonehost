@@ -9,6 +9,8 @@
 #   SKIP_PKGS=1                    do not touch apk at all
 #   WITH_DEV=1                     also install go/dotnet/gcc toolchains
 #   WITH_PODMAN=1                  also set up rootless podman + cgroup delegation
+#   WITH_SCREENOFF=1               also make the Sxmo session start with the
+#                                  screen off (installs a user hook)
 #   WITH_CHARGECAP=1               also install the charge cap (needs the module
 #                                  and the daemon built beforehand, see
 #                                  kernel/pm6150-chg/README.md)
@@ -97,6 +99,7 @@ install -m 644 "$SRC/etc/conf.d/vmalert"          /etc/conf.d/vmalert
 install -m 644 "$SRC/etc/conf.d/node-exporter"    /etc/conf.d/node-exporter
 install -m 644 "$SRC/etc/conf.d/alertmanager"     /etc/conf.d/alertmanager
 install -m 755 "$SRC/etc/init.d/vmalert"          /etc/init.d/vmalert
+install -m 755 "$SRC/etc/init.d/no-suspend"       /etc/init.d/no-suspend
 install -m 644 "$SRC/etc/victoria-metrics/scrape.yml" /etc/victoria-metrics/scrape.yml
 
 # rules: install ours, drop stale ones we no longer ship
@@ -195,6 +198,19 @@ if [ "${WITH_PODMAN:-0}" = 1 ]; then
 	rc-service podman restart >/dev/null 2>&1 || rc-service podman start >/dev/null 2>&1 || true
 fi
 
+# ---------------------------------------------------------------- screen off
+if [ "${WITH_SCREENOFF:-0}" = 1 ]; then
+	SXMO_USER=${SXMO_USER:-user}
+	SXMO_HOME=$(getent passwd "$SXMO_USER" | cut -d: -f6)
+	log "Sxmo session starts with the screen off ($SXMO_USER)"
+
+	install -d -o "$SXMO_USER" -g "$SXMO_USER" -m 755 \
+		"$SXMO_HOME/.config/sxmo/hooks"
+	install -o "$SXMO_USER" -g "$SXMO_USER" -m 755 \
+		"$SRC/sxmo/hooks/sxmo_hook_start.sh" \
+		"$SXMO_HOME/.config/sxmo/hooks/sxmo_hook_start.sh"
+fi
+
 # ---------------------------------------------------------------- charge cap
 if [ "${WITH_CHARGECAP:-0}" = 1 ]; then
 	log "charge cap"
@@ -231,10 +247,10 @@ fi
 
 # ---------------------------------------------------------------- services
 log "services"
-for s in victoria-metrics node-exporter alertmanager vmalert grafana; do
+for s in no-suspend victoria-metrics node-exporter alertmanager vmalert grafana; do
 	rc-update add "$s" default >/dev/null 2>&1 || true
 done
-for s in victoria-metrics node-exporter alertmanager vmalert grafana; do
+for s in no-suspend victoria-metrics node-exporter alertmanager vmalert grafana; do
 	rc-service "$s" restart >/dev/null 2>&1 || rc-service "$s" start
 done
 

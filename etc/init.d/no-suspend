@@ -1,0 +1,49 @@
+#!/sbin/openrc-run
+
+name="suspend inhibitor"
+description="Hold a kernel wakelock so this host never goes to s2idle"
+
+# This phone supports s2idle (/sys/power/state = "freeze mem") and Sxmo starts
+# sxmo_autosuspend, which suspends the device as soon as the session enters a
+# suspendable state - by default "screenoff" after 3 s. For a machine whose job
+# is to run VictoriaMetrics, alerting and the charge cap, suspending means
+# everything stops.
+#
+# sxmo_autosuspend follows the wakeup_count protocol: reading
+# /sys/power/wakeup_count blocks while any wakelock is held, so a wakelock taken
+# here blocks suspend regardless of what the session's state machine does with
+# its own sxmo_not_suspendable lock.
+
+: ${wakelock_name:=phonehost}
+
+depend() {
+	need sysfs
+}
+
+start() {
+	if [ ! -w /sys/power/wake_lock ]; then
+		ewarn "/sys/power/wake_lock unavailable - kernel without CONFIG_PM_WAKELOCKS?"
+		return 0
+	fi
+
+	ebegin "Holding wakelock $wakelock_name"
+	echo "$wakelock_name" > /sys/power/wake_lock
+	eend $?
+}
+
+stop() {
+	[ -w /sys/power/wake_unlock ] || return 0
+
+	ebegin "Releasing wakelock $wakelock_name"
+	echo "$wakelock_name" > /sys/power/wake_unlock
+	eend $?
+}
+
+status() {
+	if grep -qw "$wakelock_name" /sys/power/wake_lock 2>/dev/null; then
+		einfo "wakelock $wakelock_name held"
+		return 0
+	fi
+	einfo "wakelock $wakelock_name not held"
+	return 3
+}

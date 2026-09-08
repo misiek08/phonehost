@@ -107,6 +107,35 @@ drops `/etc/profile.d/dev-toolchains.sh` (GOPATH, DOTNET_ROOT, telemetry off).
 Samples that read the battery from sysfs live in `dev/`. The .NET RID on Alpine is
 `linux-musl-arm64`, not `linux-arm64`.
 
+## Screen off, and never suspending
+
+The phone runs Sxmo (dwm) started by `tinydm`. Two things had to be arranged for
+a headless host:
+
+* **It must never sleep.** `/sys/power/state` offers `freeze mem` and Sxmo runs
+  `sxmo_autosuspend`, which suspends the device 3 s after the session enters
+  `screenoff` (`SXMO_SUSPENDABLE_STATES` default). For this host that would stop
+  VictoriaMetrics, alerting and the charge cap. `etc/init.d/no-suspend` (in the
+  default runlevel) holds a kernel wakelock named `phonehost`;
+  `sxmo_autosuspend` follows the wakeup_count protocol, where reading
+  `/sys/power/wakeup_count` blocks while any wakelock is held, so suspend cannot
+  proceed no matter what the session's state machine does with its own
+  `sxmo_not_suspendable` lock. `rc-service no-suspend status` reports whether it
+  is held.
+* **The session starts with the panel off.** `WITH_SCREENOFF=1` installs
+  `sxmo/hooks/sxmo_hook_start.sh` (a verbatim copy of the Sxmo default, same
+  `configversion`, plus two lines) into `~/.config/sxmo/hooks/`. It stops
+  `sxmo_autosuspend` and sets the `screenoff` state, which powers the panel down
+  (`dpms=Off`, `bl_power=4`) and saves the ~80 mW the backlight draws.
+
+This is a dark screen, **not** a password barrier: the power button wakes an
+unlocked session. dwm's locker in Sxmo is `i3lock`, which is not installed, and
+`/etc/pam.d` here has no `base-auth`/`system-auth` for a locker to authenticate
+against (which is also why sshd runs `UsePAM no`). A real local barrier means
+either fixing PAM and installing a locker, or dropping `tinydm` from the
+runlevel so physical access lands on a `getty` password prompt — at the cost of
+the on-screen keyboard, so local recovery would then need a USB keyboard.
+
 ## Containers: rootless podman
 
 `make apply-podman` installs podman 6.1 with crun, netavark/aardvark-dns, pasta and
