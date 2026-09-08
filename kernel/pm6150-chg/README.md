@@ -142,6 +142,32 @@ deliberate descent.
 Band is set in `etc/conf.d/chargecap` (default 75–80 %, floor 60 %,
 `CHARGECAP_DESCEND=yes`).
 
+## Bonus: the PON block, and why a charger boots the phone
+
+The same PMIC regmap reaches the PON (power-on) peripheral at 0x800, so the
+module also reports it read-only and exposes one control:
+
+    cat /sys/kernel/pm6150_chg/pon            # type/subtype, PON_REASON1, TRIGGER_EN
+    cat /sys/kernel/pm6150_chg/cable_wakeup    # 1 = a charger can switch the phone on
+    echo 0 > /sys/kernel/pm6150_chg/cable_wakeup
+
+Offsets come from downstream `qpnp-power-on.c`: `TRIGGER_EN` is base + 0x80, and
+`REASON1` sits at base + 0xC0 on gen2 PONs (subtype 0x04/0x05) instead of
+base + 0x08. Both use the same bit numbering: 0 hard-reset, 1 SMPL, 2 RTC, 3 DC,
+4 USB, 5 PON1, 6 CBL, 7 KPD.
+
+Measured here: subtype 0x04 (gen2), `TRIGGER_EN 0xe4` (KPD, CBL, PON1, RTC armed;
+USB already clear) and `PON_REASON1 0x10`, i.e. the last power-on was a charger
+insertion - which is exactly the reported behaviour of a phone that will not stay
+off while plugged in.
+
+Masking clears USB|CBL|DC and verifies afterwards that KPD survived, restoring
+the register wholesale if it did not: a phone whose power key is not a power-on
+trigger cannot be switched on at all, and recovering that means opening it to
+disconnect the battery. Arming sets CBL explicitly rather than restoring the
+value seen at load, because after a masked power-off that value no longer has
+the bit in it.
+
 ## Building
 
 Cross-compiled in a container so the phone stays idle (it crashed once under a

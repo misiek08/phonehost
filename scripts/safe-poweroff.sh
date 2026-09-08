@@ -2,6 +2,7 @@
 # Power the phone off without leaving the charger inhibited.
 #
 #   sudo sh /home/user/phonehost/scripts/safe-poweroff.sh [--dry-run] [--force]
+#                                                         [--keep-cable-wakeup]
 #
 # Why this exists: the charge cap works by clearing CHARGING_ENABLE_CMD in the
 # PM6150. The PMIC keeps that bit while the system is off - it stays powered so
@@ -9,16 +10,25 @@
 # "inhibit-charge" may sit there not charging at all. chargecap restores "auto"
 # when it stops, but this checks it rather than trusting it.
 #
+# It also masks the PMIC's cable power-on trigger, because otherwise the phone
+# switches itself back on the moment it is powered off with a charger connected:
+# CBL (external power supply) is a PON trigger and mainline has no off-mode
+# charging to land in. pm6150_chg re-arms it at every load, so the masking lasts
+# exactly until the next boot - a host that died on a flat battery still revives
+# when power comes back. --keep-cable-wakeup skips this.
+#
 # There is no wake-on-LAN here: after this, only the power button brings the
 # phone back.
 set -eu
 
 DRY=0
 FORCE=0
+KEEP_WAKEUP=0
 for arg in "$@"; do
 	case "$arg" in
 		--dry-run) DRY=1 ;;
 		--force) FORCE=1 ;;
+		--keep-cable-wakeup) KEEP_WAKEUP=1 ;;
 		*) echo "unknown argument: $arg" >&2; exit 1 ;;
 	esac
 done
@@ -65,6 +75,25 @@ if [ -e "$CB" ]; then
 	fi
 else
 	log "no charge_behaviour control (pm6150_chg not loaded) - nothing to restore"
+fi
+
+# ---------------------------------------------------------------- power-on trigger
+CW=/sys/kernel/pm6150_chg/cable_wakeup
+if [ -e "$CW" ] && [ "$KEEP_WAKEUP" = 0 ]; then
+	if [ "$DRY" = 1 ]; then
+		log "cable wakeup is $(cat "$CW") - a real run would mask it so the charger cannot switch the phone back on"
+	else
+		echo 0 > "$CW" || true
+		if [ "$(cat "$CW")" = 0 ]; then
+			log "cable wakeup masked (re-armed automatically at the next boot)"
+		else
+			log "could not mask cable wakeup - the charger may switch the phone back on"
+		fi
+	fi
+elif [ "$KEEP_WAKEUP" = 1 ]; then
+	log "leaving cable wakeup armed as asked - a connected charger will switch the phone back on"
+else
+	log "no cable_wakeup control (pm6150_chg not loaded) - a connected charger will switch the phone back on"
 fi
 
 # ---------------------------------------------------------------- state

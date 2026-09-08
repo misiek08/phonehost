@@ -76,6 +76,40 @@
 #define USB_PERPH_TYPE			0x304
 #define USB_PERPH_SUBTYPE		0x305
 
+/*
+ * PON (power-on) block, a separate peripheral at 0x800 (pon@800 in the DT).
+ * Offsets and the bit layout come from downstream qpnp-power-on.c: TRIGGER_EN
+ * is base + 0x80, while REASON1 moved to base + 0xC0 on gen2 PONs (subtype
+ * 0x04/0x05) from base + 0x08 on gen1.
+ *
+ * The same bit numbering is used by REASON1 and TRIGGER_EN, and it is why a
+ * charger plugged into a powered-off phone boots it: USB and CBL are power-on
+ * triggers, and mainline has no off-mode charging to land in.
+ */
+#define PON_BASE			0x800
+#define PON_PERPH_TYPE			0x04
+#define PON_PERPH_SUBTYPE		0x05
+#define PON_REASON1_GEN1		0x08
+#define PON_REASON1_GEN2		0xC0
+#define PON_TRIGGER_EN			0x80
+#define   PON_TRIG_HARD_RESET		BIT(0)
+#define   PON_TRIG_SMPL			BIT(1)
+#define   PON_TRIG_RTC			BIT(2)
+#define   PON_TRIG_DC			BIT(3)
+#define   PON_TRIG_USB			BIT(4)
+#define   PON_TRIG_PON1			BIT(5)
+#define   PON_TRIG_CBL			BIT(6)
+#define   PON_TRIG_KPD			BIT(7)
+
+/*
+ * What a deliberate power-off masks: every charger-insertion trigger, never the
+ * power key. Arming sets CBL only - that is the one this PMIC actually fires on
+ * (read on this device: TRIGGER_EN 0xe4, so CBL armed and USB already clear,
+ * while PON_REASON1 reported usb-insertion for a cable-triggered boot).
+ */
+#define PON_TRIG_CABLE			(PON_TRIG_USB | PON_TRIG_CBL | PON_TRIG_DC)
+#define PON_TRIG_CABLE_ARM		PON_TRIG_CBL
+
 static unsigned int chgr_base = 0x1000;
 module_param(chgr_base, uint, 0444);
 MODULE_PARM_DESC(chgr_base,
@@ -87,6 +121,8 @@ MODULE_PARM_DESC(read_only,
 		 "Register the extension read-only, never write a charger bit (default N)");
 
 static struct regmap *pmic_regmap;
+static unsigned int pon_trigger_en_boot;	/* TRIGGER_EN as found at load */
+static bool pon_available;
 static struct kobject *pm6150_chg_kobj;
 static struct power_supply *battery_psy;
 static enum power_supply_charge_behaviour current_behaviour =
@@ -115,6 +151,70 @@ static const char *apsd_name(unsigned int stat)
 static int read_reg(unsigned int off, unsigned int *val)
 {
 	return regmap_read(pmic_regmap, chgr_base + off, val);
+}
+
+static int pon_read(unsigned int off, unsigned int *val)
+{
+	return regmap_read(pmic_regmap, PON_BASE + off, val);
+}
+
+/*
+ * Arm or mask the cable power-on triggers, never touching KPD: a phone whose
+ * power key is masked cannot be switched on at all, which on this device would
+ * mean opening it to disconnect the battery.
+ *
+ * Arming cannot simply restore the value seen at load: after a masked
+ * power-off the phone boots with those bits already clear, so there would be
+ * nothing to restore. It sets PON_TRIG_CABLE_ARM instead.
+ */
+static int pon_set_cable_wakeup(bool armed)
+{
+	unsigned int val, want;
+	int ret;
+
+	if (!pon_available)
+		return -ENODEV;
+	if (read_only) {
+		pr_warn("pm6150_chg: read_only=Y, refusing to touch PON\n");
+		return -EPERM;
+	}
+
+	want = armed ? PON_TRIG_CABLE_ARM : 0;
+
+	ret = regmap_update_bits(pmic_regmap, PON_BASE + PON_TRIGGER_EN,
+				 PON_TRIG_CABLE, want);
+	if (ret)
+		return ret;
+
+	ret = regmap_read(pmic_regmap, PON_BASE + PON_TRIGGER_EN, &val);
+	if (ret)
+		return ret;
+
+	if (!(val & PON_TRIG_KPD)) {
+		pr_err("pm6150_chg: PON_TRIGGER_EN 0x%02x lost the power key, restoring 0x%02x\n",
+		       val, pon_trigger_en_boot);
+		regmap_write(pmic_regmap, PON_BASE + PON_TRIGGER_EN,
+			     pon_trigger_en_boot);
+		return -EIO;
+	}
+
+	pr_info("pm6150_chg: cable wakeup %s (PON_TRIGGER_EN 0x%02x)\n",
+		armed ? "armed" : "masked", val);
+	return 0;
+}
+
+static const char *pon_reason_name(unsigned int reason)
+{
+	static const char * const names[] = {
+		"hard-reset", "smpl", "rtc", "dc-insertion", "usb-insertion",
+		"pon1", "cable", "power-key",
+	};
+	int i;
+
+	for (i = 7; i >= 0; i--)
+		if (reason & BIT(i))
+			return names[i];
+	return "none";
 }
 
 static int write_bit(unsigned int off, unsigned int mask, bool set)
@@ -350,12 +450,100 @@ static ssize_t status_show(struct kobject *kobj, struct kobj_attribute *attr,
 	return sysfs_emit(buf, "%s\n", status);
 }
 
+/*
+ * Why the phone powers itself on when a charger is plugged into it while off,
+ * and which triggers are currently armed.
+ */
+static ssize_t pon_show(struct kobject *kobj, struct kobj_attribute *attr,
+			char *buf)
+{
+	unsigned int type, subtype, trig, reason;
+	bool gen2;
+	int len = 0, ret;
+
+	if (!pon_available)
+		return sysfs_emit(buf, "unavailable\n");
+
+	ret = pon_read(PON_PERPH_TYPE, &type);
+	if (!ret)
+		ret = pon_read(PON_PERPH_SUBTYPE, &subtype);
+	if (!ret)
+		ret = pon_read(PON_TRIGGER_EN, &trig);
+	if (ret)
+		return ret;
+
+	gen2 = subtype == 0x04 || subtype == 0x05;
+	ret = pon_read(gen2 ? PON_REASON1_GEN2 : PON_REASON1_GEN1, &reason);
+	if (ret)
+		return ret;
+
+	len += sysfs_emit_at(buf, len, "PON_TYPE/SUBTYPE     0x%02x/0x%02x (%s)\n",
+			     type, subtype, gen2 ? "gen2" : "gen1");
+	len += sysfs_emit_at(buf, len, "PON_REASON1          0x%02x  last_power_on=%s\n",
+			     reason, pon_reason_name(reason));
+	len += sysfs_emit_at(buf, len,
+			     "PON_TRIGGER_EN       0x%02x  kpd=%d cbl=%d usb=%d dc=%d rtc=%d smpl=%d\n",
+			     trig,
+			     !!(trig & PON_TRIG_KPD), !!(trig & PON_TRIG_CBL),
+			     !!(trig & PON_TRIG_USB), !!(trig & PON_TRIG_DC),
+			     !!(trig & PON_TRIG_RTC), !!(trig & PON_TRIG_SMPL));
+	len += sysfs_emit_at(buf, len, "TRIGGER_EN_at_load   0x%02x\n",
+			     pon_trigger_en_boot);
+	len += sysfs_emit_at(buf, len, "cable_wakeup         %s\n",
+			     (trig & PON_TRIG_CABLE) ? "armed" : "masked");
+
+	return len;
+}
+
+/*
+ * "1" leaves a charger able to boot the phone (the default, so a host that died
+ * on a flat battery comes back when power returns); "0" masks it, which is what
+ * a deliberate power-off wants so the phone stays off with the cable in.
+ */
+static ssize_t cable_wakeup_show(struct kobject *kobj,
+				 struct kobj_attribute *attr, char *buf)
+{
+	unsigned int val;
+	int ret;
+
+	if (!pon_available)
+		return sysfs_emit(buf, "unavailable\n");
+
+	ret = pon_read(PON_TRIGGER_EN, &val);
+	if (ret)
+		return ret;
+
+	return sysfs_emit(buf, "%d\n", !!(val & PON_TRIG_CABLE));
+}
+
+static ssize_t cable_wakeup_store(struct kobject *kobj,
+				  struct kobj_attribute *attr,
+				  const char *buf, size_t count)
+{
+	bool armed;
+	int ret;
+
+	ret = kstrtobool(buf, &armed);
+	if (ret)
+		return ret;
+
+	ret = pon_set_cable_wakeup(armed);
+	if (ret)
+		return ret;
+
+	return count;
+}
+
 static struct kobj_attribute regs_attr = __ATTR_RO(regs);
 static struct kobj_attribute status_attr = __ATTR_RO(status);
+static struct kobj_attribute pon_attr = __ATTR_RO(pon);
+static struct kobj_attribute cable_wakeup_attr = __ATTR_RW(cable_wakeup);
 
 static struct attribute *pm6150_chg_attrs[] = {
 	&regs_attr.attr,
 	&status_attr.attr,
+	&pon_attr.attr,
+	&cable_wakeup_attr.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(pm6150_chg);
@@ -413,6 +601,16 @@ static int __init pm6150_chg_init(void)
 		return -ENODEV;
 	}
 
+	/* PON lives in the same PMIC; only read it for now */
+	if (!regmap_read(pmic_regmap, PON_BASE + PON_TRIGGER_EN, &pon_trigger_en_boot)) {
+		pon_available = true;
+		pr_info("pm6150_chg: PON_TRIGGER_EN 0x%02x (cable wakeup %s)\n",
+			pon_trigger_en_boot,
+			(pon_trigger_en_boot & PON_TRIG_CABLE) ? "armed" : "masked");
+	} else {
+		pr_warn("pm6150_chg: cannot read the PON block at 0x%04x\n", PON_BASE);
+	}
+
 	battery_psy = power_supply_get_by_name("qcom_qg");
 	if (!battery_psy) {
 		pr_err("pm6150_chg: qcom_qg power supply not registered\n");
@@ -445,6 +643,20 @@ static int __init pm6150_chg_init(void)
 		if (ret)
 			pr_warn("pm6150_chg: could not restore auto behaviour: %d\n",
 				ret);
+
+		/*
+		 * Re-arm cable wakeup on every load. safe-poweroff masks it so a
+		 * deliberate shutdown stays off with the charger connected; once
+		 * the phone is running again a charger should be able to revive it
+		 * after a flat battery, so the masking must not outlive the boot
+		 * it was meant for.
+		 */
+		if (pon_available && !(pon_trigger_en_boot & PON_TRIG_CABLE)) {
+			ret = pon_set_cable_wakeup(true);
+			if (ret)
+				pr_warn("pm6150_chg: could not re-arm cable wakeup: %d\n",
+					ret);
+		}
 	}
 
 	pr_info("pm6150_chg: charge_behaviour on qcom_qg%s, state in /sys/kernel/pm6150_chg/\n",

@@ -88,6 +88,21 @@ it: stop chargecap, verify `charge_behaviour` really reads `auto`, refuse to
 continue otherwise (`--force` overrides), report the battery level, `sync`, then
 `poweroff`. `--dry-run` shows what it would do.
 
+It also masks the PMIC's **cable power-on trigger**. Without that, a phone
+powered off with a charger connected switches straight back on: CBL ("external
+power supply") is a power-on trigger in the PM6150's PON block, and mainline has
+no off-mode charging to land in, so PON boots the whole OS. Read on this device:
+
+    PON_TRIGGER_EN  0xe4  kpd=1 cbl=1 usb=0 rtc=1
+    PON_REASON1     0x10  last_power_on=usb-insertion
+
+`echo 0 > /sys/kernel/pm6150_chg/cable_wakeup` clears CBL (0xe4 -> 0xa4) and
+never touches KPD (bit 7) - a masked power key would mean a phone that cannot be
+switched on at all. `pm6150_chg` re-arms the trigger every time it loads, so the
+masking lasts exactly until the next boot: a deliberate shutdown stays off, while
+a host that died on a flat battery still revives when power returns.
+`--keep-cable-wakeup` skips the masking.
+
 There is no wake-on-LAN: after a shutdown only the power button brings the phone
 back.
 
