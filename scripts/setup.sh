@@ -170,6 +170,8 @@ if [ "${WITH_PODMAN:-0}" = 1 ]; then
 	rc-update add local default >/dev/null 2>&1 || true
 
 	install -m 644 "$SRC/etc/conf.d/podman" /etc/conf.d/podman
+	# local init script: tolerates a missing /run/user/<uid> at boot, see header
+	install -m 755 "$SRC/etc/init.d/podman" /etc/init.d/podman
 	rc-update add podman default >/dev/null 2>&1 || true
 
 	# Delegated cgroup v2 subtree: without it rootless podman silently ignores

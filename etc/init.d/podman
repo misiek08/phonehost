@@ -1,0 +1,77 @@
+#!/sbin/openrc-run
+# Local copy of podman-openrc's init script with one change: start_post waits
+# for the rootless runtime directory and never fails the service.
+#
+# Why: with podman_user=user the packaged script runs start_containers from
+# start_post immediately. At boot /run/user/<uid> does not exist yet - elogind
+# creates it when the (auto-login) session appears, roughly a minute later - so
+# podman errors out, start_post returns non-zero and OpenRC records the service
+# as stopped even though supervise-daemon keeps the daemon running. Every later
+# `rc-service podman start` then hits "already running" and fails.
+#
+# apk keeps this file on upgrades of podman-openrc and drops the new upstream
+# version next to it as podman.apk-new; diff it occasionally.
+supervisor=supervise-daemon
+
+name="Podman API service"
+description="Listening service that answers API calls for Podman"
+
+command=/usr/bin/podman
+command_args="system service ${podman_opts:=--time 0} $podman_uri"
+command_user="${podman_user:=root}"
+
+: ${podman_runtime_dir_timeout:=45}
+
+extra_commands="start_containers"
+description_start_containers="Start containers with restart policy set to always or unless-stopped"
+
+depend() {
+	need sysfs cgroups
+	after elogind cgroup-delegate
+}
+
+start_containers() {
+	ebegin "Starting containers with restart policy set to always or unless-stopped"
+	su "$podman_user" -s /bin/sh -c "$command start --all --filter restart-policy=always --filter restart-policy=unless-stopped"
+	eend $?
+}
+
+start_pre() {
+	if [ "$podman_user" = "root" ]; then
+		einfo "Configured as rootful service"
+		checkpath -d -m 0755 /run/podman
+	else
+		einfo "Configured as rootless service"
+		case "${podman_uri}" in
+			unix://*)
+				# Create the socket parent directory and make it writable for
+				# $podman_user, but avoid changing the permissions of an
+				# existing directory.
+				socket_dir="$(dirname -- "${podman_uri#unix://}")"
+				[ -e "${socket_dir}" ] || checkpath -d -m 0755 -o "${command_user}:" "${socket_dir}"
+				;;
+		esac
+		modprobe tun
+		modprobe fuse
+	fi
+}
+
+start_post() {
+	if [ "$podman_user" != "root" ]; then
+		uid=$(id -u "$podman_user" 2>/dev/null) || uid=""
+		if [ -n "$uid" ] && [ ! -d "/run/user/$uid" ]; then
+			ebegin "Waiting for /run/user/$uid (up to ${podman_runtime_dir_timeout}s)"
+			i=0
+			while [ ! -d "/run/user/$uid" ] && [ "$i" -lt "$podman_runtime_dir_timeout" ]; do
+				sleep 1
+				i=$((i + 1))
+			done
+			eend $([ -d "/run/user/$uid" ] && echo 0 || echo 1)
+		fi
+	fi
+
+	# Never fail the service because no container could be restarted: the API
+	# daemon itself is up and OpenRC's state must reflect that.
+	start_containers || ewarn "start_containers failed, continuing"
+	return 0
+}

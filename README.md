@@ -79,10 +79,15 @@ fuel gauge and the Type-C port; the DT has no charger node. Mainline
 sm7125-mainline fork ships no pm6150 charger either. Charging therefore runs on
 PMIC hardware defaults and the battery sits at 100%.
 
-A real cap has to come from outside the phone (a switchable smart plug, or a hub
-with per-port power switching driven by `uhubctl`) or from writing a pm6150 SMB5
-charger driver. Until then `BatteryAbove80` and `BatteryFull` in `battery.yml`
-just tell you about it.
+Work in progress on a real cap lives in `kernel/pm6150-chg/`: mainline
+implements charge inhibit as a single `USBIN_SUSPEND` bit, so a small loadable
+module can expose it without a charger driver, a DTB change or a kernel flash.
+Read that README before touching it. Until it lands, `BatteryAbove80` and
+`BatteryFull` in `battery.yml` just tell you about the problem.
+
+External options were ruled out for this host: it hangs off a Windows PC's USB
+port (`Ethernet 3` at 172.16.42.2 is the other end of the phone's NCM gadget),
+so `uhubctl` has nothing to talk to, and no smart plug is in play.
 
 Gauge quirk: `qcom_qg` reports the raw ADC sign, so **positive current means
 discharging** — the driver does not invert it to the Linux convention. Alerts for
