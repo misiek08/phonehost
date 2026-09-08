@@ -103,8 +103,14 @@ masking lasts exactly until the next boot: a deliberate shutdown stays off, whil
 a host that died on a flat battery still revives when power returns.
 `--keep-cable-wakeup` skips the masking.
 
-There is no wake-on-LAN: after a shutdown only the power button brings the phone
-back.
+**A connected charger switches the phone back on**, about 90 s after the
+power-off, and there is nothing Linux can do about it - see
+`kernel/pm6150-chg/README.md` for the measurements, including why a boot-time
+guard that shuts it down again is either useless or a permanent 90-second
+boot/power-off cycle. To keep the phone off, unplug it.
+
+There is no wake-on-LAN either: after a shutdown only the power button brings the
+phone back.
 
 ## Backup and restore
 

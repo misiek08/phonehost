@@ -161,7 +161,31 @@ USB already clear) and `PON_REASON1 0x10`, i.e. the last power-on was a charger
 insertion - which is exactly the reported behaviour of a phone that will not stay
 off while plugged in.
 
-**Masking does not survive a power-off on this device.** Tested: the write takes
+**Masking does not survive a power-off on this device, and the trigger re-fires
+as long as the cable is in.** Two experiments, both with the charger connected:
+
+| | result |
+|---|---|
+| mask `TRIGGER_EN`, power off | boots itself after ~90 s, `TRIGGER_EN_at_load 0xe4`, `PON_REASON1 0x10` |
+| power off again immediately | boots itself after ~90 s again |
+
+The second one matters: the PON trigger fires on VBUS *presence*, not just on the
+insertion transition. That kills the obvious workaround of a boot-time guard
+that shuts the phone down again when it sees a cable-triggered boot:
+
+* gate it behind a marker from `safe-poweroff` and it is useless - the guard
+  squashes the first auto-boot, the PMIC fires again, and the phone ends up on
+  anyway, just two minutes later;
+* make it unconditional and it is a permanent boot/power-off cycle for as long
+  as the cable stays connected, roughly every 90 s, with the phone reachable for
+  seconds at a time - and if the reason register ever misread a power-key boot,
+  the phone could not be switched on at all.
+
+So there is no software fix. **Unplug the cable to keep the phone off**;
+otherwise power applied means the phone runs, which for a monitoring host is
+mostly the behaviour you want anyway.
+
+Details of the first experiment: Tested: the write takes
 effect at runtime (`0xe4` -> `0xa4`, verified by reading it back), the phone is
 powered off with `safe-poweroff.sh`, and it boots itself again ~45 s later with
 `TRIGGER_EN_at_load 0xe4` and `PON_REASON1 0x10` (usb-insertion). So either the
