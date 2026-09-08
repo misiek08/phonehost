@@ -40,8 +40,22 @@ Requires an ssh alias `phone` (or `make SSH_HOST=...`). Privileged targets use
     make diff         # show drift between repo and phone
     make backup       # consistent snapshot, pulled into backups/
     make restore F=backups/phonehost-note9pro-<stamp>.tar.gz
-    make telegram T=<bot_token> C=<chat_id>
+    make telegram C=<chat_id> TOKENFILE=<file>
     make rotate-grafana-password
+
+Telegram alerting is live: Alertmanager posts to the private channel through a
+bot, with the token in `/etc/alertmanager/telegram_token` (0640 root:prometheus)
+referenced as `bot_token_file`, so it is never in the config or in this repo.
+`set-telegram-alerts` validates the generated config with `amtool` and refuses
+to install one Alertmanager would reject.
+
+Finding the chat id of a private channel: there is no lookup, the bot has to see
+an event. Make it a channel **administrator** (otherwise it receives no posts),
+post any message, then long-poll
+
+    curl -s "https://api.telegram.org/bot<token>/getUpdates?timeout=60"
+
+and read `result[].channel_post.chat.id` - a channel id is negative.
 
 `scripts/setup.sh` is idempotent and safe to re-run. It keeps the existing
 Grafana password and Telegram receiver unless you pass new ones, prints a

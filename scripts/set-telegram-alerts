@@ -1,6 +1,12 @@
 #!/bin/sh
 # Enable Telegram delivery in Alertmanager.
-# Usage: set-telegram-alerts <bot_token> <chat_id>
+#
+#   set-telegram-alerts <bot_token> <chat_id>
+#   set-telegram-alerts - <chat_id> < token-file     # keeps the token out of argv
+#
+# The token is stored in /etc/alertmanager/telegram_token (0640 root:prometheus)
+# and referenced from the config as bot_token_file, so it never appears in the
+# config itself.
 set -eu
 
 if [ "$(id -u)" != 0 ]; then
@@ -8,7 +14,7 @@ if [ "$(id -u)" != 0 ]; then
 	exit 1
 fi
 if [ $# -ne 2 ]; then
-	echo "usage: set-telegram-alerts <bot_token> <chat_id>" >&2
+	echo "usage: set-telegram-alerts <bot_token>|- <chat_id>" >&2
 	exit 1
 fi
 
@@ -16,33 +22,50 @@ TOKEN=$1
 CHAT_ID=$2
 TMPL=/etc/alertmanager/alertmanager.telegram.tmpl
 CONF=/etc/alertmanager/alertmanager.yml
+TOKEN_FILE=/etc/alertmanager/telegram_token
+
+if [ "$TOKEN" = "-" ]; then
+	TOKEN=$(cat)
+fi
 
 case "$CHAT_ID" in
 	-[0-9]*|[0-9]*) ;;
-	*) echo "chat_id must be numeric (may be negative for groups)" >&2; exit 1 ;;
+	*) echo "chat_id must be numeric (negative for groups and channels)" >&2; exit 1 ;;
 esac
+case "$TOKEN" in
+	[0-9]*:*) ;;
+	*) echo "that does not look like a bot token" >&2; exit 1 ;;
+esac
+[ -f "$TMPL" ] || { echo "$TMPL missing - run setup.sh first" >&2; exit 1; }
 
-printf '%s' "$TOKEN" > /etc/alertmanager/telegram_token
-chown root:prometheus /etc/alertmanager/telegram_token
-chmod 640 /etc/alertmanager/telegram_token
+umask 077
+printf '%s' "$TOKEN" > "$TOKEN_FILE"
+chown root:prometheus "$TOKEN_FILE"
+chmod 640 "$TOKEN_FILE"
 
 sed "s|__CHAT_ID__|$CHAT_ID|" "$TMPL" > "$CONF.new"
 chown root:prometheus "$CONF.new"
 chmod 644 "$CONF.new"
 
-if amtool check-config "$CONF.new" >/dev/null 2>&1 || alertmanager --config.file="$CONF.new" --help >/dev/null 2>&1; then
-	:
+# Refuse to install a config Alertmanager would choke on; the running one stays.
+if command -v amtool >/dev/null 2>&1; then
+	if ! amtool check-config "$CONF.new"; then
+		rm -f "$CONF.new"
+		echo "amtool rejected the generated config, keeping the current one" >&2
+		exit 1
+	fi
 fi
+
 mv "$CONF.new" "$CONF"
 rc-service alertmanager restart
 sleep 2
 rc-service alertmanager status
 
 echo
-echo "Sending test alert to Telegram..."
+echo "Sending a test alert..."
 NOW=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
 curl -sS -XPOST http://127.0.0.1:9093/api/v2/alerts -H 'Content-Type: application/json' -d "[{
-  \"labels\": {\"alertname\": \"TelegramSetupTest\", \"severity\": \"info\", \"instance\": \"note9pro\"},
+  \"labels\": {\"alertname\": \"TelegramSetupTest\", \"severity\": \"info\", \"instance\": \"$(hostname)\"},
   \"annotations\": {\"summary\": \"Alertmanager Telegram delivery configured\"},
   \"startsAt\": \"$NOW\"
 }]" && echo " -> queued (arrives within ~30s)"

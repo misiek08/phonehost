@@ -27,7 +27,7 @@ help:
 	@echo 'logs                     tail the stack logs'
 	@echo 'backup                   snapshot on the phone, pull archive into $(BACKUPS)/'
 	@echo 'restore F=<archive>      push an archive and restore it (asks for confirmation)'
-	@echo 'telegram T=<token> C=<chat_id>   enable Telegram alerting'
+	@echo 'telegram C=<chat_id> [TOKENFILE=f|T=<token>]   enable Telegram alerting'
 	@echo 'rotate-grafana-password  set a new random Grafana admin password'
 	@echo 'diff                     show config drift between repo and phone'
 
@@ -93,9 +93,18 @@ restore:
 	@cat $(F) | $(SSH) 'cat > /var/tmp/$(notdir $(F))'
 	@$(SSHT) 'sudo sh $(REMOTE)/scripts/restore.sh /var/tmp/$(notdir $(F))'
 
+# TOKENFILE keeps the token out of the process list on both ends; T= is the
+# convenient but less private form.
 telegram:
-	@test -n "$(T)" -a -n "$(C)" || { echo 'usage: make telegram T=<bot_token> C=<chat_id>'; exit 1; }
-	@$(SSHT) 'sudo set-telegram-alerts $(T) $(C)'
+	@test -n "$(C)" || { echo 'usage: make telegram C=<chat_id> TOKENFILE=<file>  (or T=<token>)'; exit 1; }
+	@if [ -n "$(TOKENFILE)" ]; then \
+		cat "$(TOKENFILE)" | $(SSH) 'cat > /tmp/.tgtoken && chmod 600 /tmp/.tgtoken'; \
+		$(SSHT) 'sudo sh -c "set-telegram-alerts - $(C) < /tmp/.tgtoken; rm -f /tmp/.tgtoken"'; \
+	elif [ -n "$(T)" ]; then \
+		$(SSHT) 'sudo set-telegram-alerts $(T) $(C)'; \
+	else \
+		echo 'need TOKENFILE=<file> or T=<token>'; exit 1; \
+	fi
 
 rotate-grafana-password: push
 	@pw=$$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n'); \
