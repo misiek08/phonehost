@@ -20,10 +20,14 @@ groups:
         annotations:
           summary: "chargecap cannot write charge_behaviour"
 
+      # A descent that is already under way is the cap working, not failing.
       - alert: BatteryAboveBand
         expr: |
-          node_power_supply_capacity{power_supply="qcom_qg"}
-            > on(instance) (chargecap_band_percent{bound="upper"} + 5)
+          (
+            node_power_supply_capacity{power_supply="qcom_qg"}
+              > on(instance) (chargecap_band_percent{bound="upper"} + 5)
+          )
+          unless on(instance) (chargecap_behaviour{mode="force-discharge"} == 1)
         for: 2h
         labels: {severity: warning}
         annotations:
