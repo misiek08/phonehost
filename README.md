@@ -69,7 +69,7 @@ starts everything again. It asks for confirmation first. Add `--configs` (run
 token and the VictoriaMetrics auth keys. `backups/` is gitignored; treat the
 files as you treat access to the phone itself.
 
-## Charging: there is no 80% limit
+## Charging: capped at 80%
 
 The PM6150 charger block has no Linux driver. Verified on this device: nothing in
 `/sys` exposes `charge_control_limit`, `input_suspend`, `charge_behaviour` or
@@ -79,11 +79,17 @@ fuel gauge and the Type-C port; the DT has no charger node. Mainline
 sm7125-mainline fork ships no pm6150 charger either. Charging therefore runs on
 PMIC hardware defaults and the battery sits at 100%.
 
-Work in progress on a real cap lives in `kernel/pm6150-chg/`: mainline
-implements charge inhibit as a single `USBIN_SUSPEND` bit, so a small loadable
-module can expose it without a charger driver, a DTB change or a kernel flash.
-Read that README before touching it. Until it lands, `BatteryAbove80` and
-`BatteryFull` in `battery.yml` just tell you about the problem.
+**This is now solved in software**, without a charger driver, a DTB change or a
+kernel flash: `kernel/pm6150-chg/` is a loadable module that drives two single
+bits of the charger block and exposes them as `charge_behaviour` on `qcom_qg`,
+and `daemon/chargecap` holds the level in a band (default 75–80 %). Measured:
+`inhibit-charge` parks the battery at exactly 0 µA with the phone still running
+off USB, so the cap costs no cycling, no heat and no wasted power. Read
+`kernel/pm6150-chg/README.md` before touching either.
+
+    make build-chargecap                     # daemon, cross-built in a container
+    sh scripts/build-module.sh               # module, see the kernel README
+    make apply-chargecap                     # install both on the phone
 
 External options were ruled out for this host: it hangs off a Windows PC's USB
 port (`Ethernet 3` at 172.16.42.2 is the other end of the phone's NCM gadget),

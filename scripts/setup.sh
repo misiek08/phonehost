@@ -9,6 +9,11 @@
 #   SKIP_PKGS=1                    do not touch apk at all
 #   WITH_DEV=1                     also install go/dotnet/gcc toolchains
 #   WITH_PODMAN=1                  also set up rootless podman + cgroup delegation
+#   WITH_CHARGECAP=1               also install the charge cap (needs the module
+#                                  and the daemon built beforehand, see
+#                                  kernel/pm6150-chg/README.md)
+#   CHARGECAP_KO=<path>            pm6150_chg.ko to install (default $SRC/pm6150_chg.ko)
+#   CHARGECAP_BIN=<path>           chargecap binary   (default $SRC/chargecap)
 set -eu
 
 SRC=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -188,6 +193,34 @@ if [ "${WITH_PODMAN:-0}" = 1 ]; then
 
 	su "$PODMAN_USER" -s /bin/sh -c 'podman system migrate' >/dev/null 2>&1 || true
 	rc-service podman restart >/dev/null 2>&1 || rc-service podman start >/dev/null 2>&1 || true
+fi
+
+# ---------------------------------------------------------------- charge cap
+if [ "${WITH_CHARGECAP:-0}" = 1 ]; then
+	log "charge cap"
+	KO=${CHARGECAP_KO:-$SRC/pm6150_chg.ko}
+	BIN=${CHARGECAP_BIN:-$SRC/chargecap}
+	KV=$(uname -r)
+
+	if [ ! -f "$KO" ] || [ ! -f "$BIN" ]; then
+		ewarn_missing="pm6150_chg.ko or chargecap binary missing"
+		echo "  $ewarn_missing - build them first (see kernel/pm6150-chg/README.md)" >&2
+		exit 1
+	fi
+
+	# The module is tied to this exact kernel; after a kernel upgrade it simply
+	# will not load, which leaves charging enabled - the safe direction.
+	install -d -m 755 "/lib/modules/$KV/extra"
+	install -m 644 "$KO" "/lib/modules/$KV/extra/pm6150_chg.ko"
+	depmod -a
+	echo pm6150_chg > /etc/modules-load.d/pm6150-chg.conf
+	modprobe pm6150_chg 2>/dev/null || insmod "/lib/modules/$KV/extra/pm6150_chg.ko" 2>/dev/null || true
+
+	install -m 755 "$BIN" /usr/local/bin/chargecap
+	install -m 755 "$SRC/etc/init.d/chargecap" /etc/init.d/chargecap
+	install -m 644 "$SRC/etc/conf.d/chargecap" /etc/conf.d/chargecap
+	rc-update add chargecap default >/dev/null 2>&1 || true
+	rc-service chargecap restart >/dev/null 2>&1 || rc-service chargecap start >/dev/null 2>&1 || true
 fi
 
 # ---------------------------------------------------------------- dev env

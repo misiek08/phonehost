@@ -16,3 +16,6 @@ kernel/**/*.mod.c
 kernel/**/.*.cmd
 kernel/**/Module.symvers
 kernel/**/modules.order
+# build artifacts staged in the repo root for `make apply-chargecap`
+/pm6150_chg.ko
+/chargecap

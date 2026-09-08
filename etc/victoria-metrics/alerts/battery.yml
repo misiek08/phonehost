@@ -2,33 +2,55 @@ groups:
   - name: battery
     interval: 30s
     rules:
-      # Kernel has no charger driver (pm6150 SMB5 not exposed), so the 80% cap
-      # cannot be enforced in sysfs. These rules are the software substitute.
-      - alert: BatteryAbove80
-        expr: node_power_supply_capacity{power_supply="qcom_qg"} > 80
+      # The charge cap is enforced by the pm6150_chg module plus the chargecap
+      # daemon (see kernel/pm6150-chg/README.md). These rules watch that it
+      # keeps working rather than warning about the level itself.
+      - alert: ChargeCapUnavailable
+        expr: chargecap_available == 0 or absent(chargecap_available)
         for: 15m
         labels: {severity: warning}
         annotations:
-          summary: "Battery at {{ $value }}% - above the 80% target"
-          description: "No kernel charge limit available; unplug the charger or cut mains power to the charger."
+          summary: "Charge cap not in control"
+          description: "chargecap cannot reach charge_behaviour - is the pm6150_chg module loaded (a kernel upgrade unloads it)?"
+
+      - alert: ChargeCapWriteErrors
+        expr: sum without(instance) (rate(chargecap_write_errors_total[10m])) > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "chargecap cannot write charge_behaviour"
+
+      - alert: BatteryAboveBand
+        expr: |
+          node_power_supply_capacity{power_supply="qcom_qg"}
+            > on(instance) (chargecap_band_percent{bound="upper"} + 5)
+        for: 2h
+        labels: {severity: warning}
+        annotations:
+          summary: "Battery at {{ $value }}%, well above the configured band"
+          description: "The cap is not bringing the level down; check the chargecap log and /sys/kernel/pm6150_chg/regs."
 
       - alert: BatteryFull
         expr: node_power_supply_capacity{power_supply="qcom_qg"} >= 100
         for: 30m
         labels: {severity: warning}
         annotations:
-          summary: "Battery held at 100% for 30m - accelerated wear"
+          summary: "Battery held at 100% for 30m - the charge cap has failed"
 
-      # qcom_qg reports the raw gauge ADC sign (negative = charging on this
-      # platform), so mains loss is detected from the capacity trend instead,
-      # which is sign-agnostic.
+      # A deliberate descent into the band also drains the battery, so exclude
+      # it; otherwise every cap cycle would look like a power cut.
       - alert: MainsPowerLost
-        expr: node_power_supply_capacity{power_supply="qcom_qg"} - (node_power_supply_capacity{power_supply="qcom_qg"} offset 30m) <= -3
+        expr: |
+          (
+            node_power_supply_capacity{power_supply="qcom_qg"}
+              - (node_power_supply_capacity{power_supply="qcom_qg"} offset 30m) <= -3
+          )
+          unless on(instance) (chargecap_behaviour{mode="force-discharge"} == 1)
         for: 5m
         labels: {severity: critical}
         annotations:
           summary: "Battery draining - mains power likely lost"
-          description: "Charge level dropped {{ $value }} points over the last 30 minutes."
+          description: "Charge level dropped {{ $value }} points over 30 minutes with no deliberate discharge in progress."
 
       - alert: BatteryLow
         expr: node_power_supply_capacity{power_supply="qcom_qg"} < 25

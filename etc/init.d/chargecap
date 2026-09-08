@@ -1,0 +1,31 @@
+#!/sbin/openrc-run
+
+name="chargecap"
+description="Keep the battery inside a charge band using pm6150_chg"
+
+command="/usr/local/bin/chargecap"
+command_background=yes
+pidfile="/run/$RC_SVCNAME.pid"
+error_log="/var/log/chargecap.log"
+output_log="/var/log/chargecap.log"
+
+depend() {
+	need net
+	after modules
+}
+
+start_pre() {
+	if [ ! -e /sys/class/power_supply/qcom_qg/charge_behaviour ]; then
+		eerror "charge_behaviour missing - the pm6150_chg module is not loaded"
+		return 1
+	fi
+	checkpath -f -m 644 "$error_log"
+}
+
+stop_post() {
+	# The daemon restores charging itself on SIGTERM; make sure of it even if
+	# it was killed hard.
+	if [ -e /sys/class/power_supply/qcom_qg/charge_behaviour ]; then
+		echo auto > /sys/class/power_supply/qcom_qg/charge_behaviour 2>/dev/null || true
+	fi
+}

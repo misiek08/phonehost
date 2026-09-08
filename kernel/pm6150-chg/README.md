@@ -1,4 +1,4 @@
-# pm6150-chg — towards an 80 % charge cap
+# pm6150-chg — an 80 % charge cap on a driverless charger
 
 The Redmi Note 9 Pro runs a mainline kernel with **no charger driver**. The only
 power supplies are the read-only `qcom_qg` fuel gauge and the Type-C port, so
@@ -70,18 +70,77 @@ What confirms the assumption:
 If the type ids read as `0x00`/`0xff`, or plugin does not follow the cable, the
 base is wrong or the block is not accessible — and stage 2 must not happen.
 
-## Stage 2 (only after stage 1 checks out)
+### Stage 1 result
 
-Add a write path for `USBIN_SUSPEND` exposed as the standard
-`POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR` on `qcom_qg` via the power-supply extension
-API (`power_supply_register_extension`, present in 6.14 — the
-`/sys/class/power_supply/qcom_qg/extensions/` directory already exists):
+Confirmed on the device, cable out and cable in:
 
-    echo inhibit-charge > /sys/class/power_supply/qcom_qg/charge_behaviour
-    echo auto           > /sys/class/power_supply/qcom_qg/charge_behaviour
+| field | unplugged | plugged |
+|---|---|---|
+| `PERPH_TYPE` / `SUBTYPE` | 0x02 / 0x80 | same — real CHGR peripheral at 0x1000 |
+| `USB_PERPH_TYPE` / `SUBTYPE` | 0x02 / 0x83 | same — distinct USB block at 0x1300 |
+| `CHARGER_STATUS_1` | 0x47 `DISABLE_CHARGE` | 0x03 `FULLON_CHARGE` |
+| `USB_INT_RT_STS` | 0x26 plugin=0 uv=1 lt3p6v=1 | 0x10 plugin=1 uv=0 lt3p6v=0 |
+| gauge | +0.23 A, draining | −0.19 A, filling |
 
-Then a small hysteresis daemon (80 % → inhibit, 70 % → auto) as an OpenRC
-service, with its state exported to VictoriaMetrics and a Grafana panel.
+The register map tracks the physical cable in both directions, so the layout is
+the assumed one.
+
+## Stage 2 (done): charge_behaviour
+
+`CHARGING_ENABLE_CMD` turned out to be the better lever of the two and became
+the default. Measured with the cable in:
+
+    inhibit-charge   CHARGING_ENABLE_CMD=0, plugin=1
+                     battery current exactly 0 µA over five samples,
+                     level held, voltage relaxed from 4.37 V to 4.30 V
+    force-discharge  USBIN_SUSPEND=1, plugin=1
+                     +0.02 A, voltage sagging - the system runs off the battery
+    auto             both bits back, FULLON_CHARGE, −0.19 A
+
+So charging can be stopped with **no cycling, no discharging, no heat and no
+wasted power** — the cell simply rests at 0 A instead of floating at 4.44 V.
+
+Both are exposed on `qcom_qg` through the power-supply extension API:
+
+    echo auto            > /sys/class/power_supply/qcom_qg/charge_behaviour
+    echo inhibit-charge  > /sys/class/power_supply/qcom_qg/charge_behaviour
+    echo force-discharge > /sys/class/power_supply/qcom_qg/charge_behaviour
+
+`STATUS` could not be extended (`qcom_qg` hardcodes it to `Unknown` and
+`power_supply_register_extension()` rejects a property the base driver already
+owns — which is also why no battery indicator can ever show "charging" on this
+phone), so the real charger state is published separately:
+
+    cat /sys/kernel/pm6150_chg/status      # Charging / Not charging / Full / Discharging
+    cat /sys/kernel/pm6150_chg/regs        # raw registers, decoded
+
+Charging is restored on module load *and* unload, because the PMIC keeps these
+bits across a warm reboot: a phone that rebooted while inhibited must not come
+back up refusing to charge. `read_only=Y` as a module parameter reverts it to
+stage-1 behaviour.
+
+## The daemon
+
+`daemon/chargecap` holds the level inside a band. Since `inhibit-charge` cannot
+bring a level *down* (the input still powers the phone, so the battery sits
+still), the control law needs all three levers:
+
+    level > upper    force-discharge   come down into the band
+    level = upper    inhibit-charge    hold at 0 A
+    level <= lower   auto              refill
+    inside the band  hold, never keep discharging
+    level <= floor   auto, unconditionally
+
+Charging is restored on SIGTERM, on any unreadable sysfs file and by the init
+script's `stop_post` — verified in the log: `got terminated, shutting down` /
+`charging restored on exit`. Metrics land in VictoriaMetrics as job `chargecap`
+and drive the "Charge cap" row of the Grafana dashboard; `battery.yml` watches
+that the cap keeps working (`ChargeCapUnavailable`, `ChargeCapWriteErrors`,
+`BatteryAboveBand`, `BatteryFull`) and `MainsPowerLost` now excludes a
+deliberate descent.
+
+Band is set in `etc/conf.d/chargecap` (default 75–80 %, floor 60 %,
+`CHARGECAP_DESCEND=yes`).
 
 ## Building
 

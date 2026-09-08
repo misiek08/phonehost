@@ -11,13 +11,15 @@ BACKUPS  ?= backups
 SSH  := ssh $(SSH_HOST)
 SSHT := ssh -t $(SSH_HOST)
 
-.PHONY: help push apply apply-dev apply-podman apply-all images verify status logs backup restore telegram rotate-grafana-password diff shell
+.PHONY: help push apply apply-dev apply-podman apply-chargecap apply-all images build-chargecap verify status logs backup restore telegram rotate-grafana-password diff shell
 
 help:
 	@echo 'push                     copy this repo to $(SSH_HOST):$(REMOTE)'
 	@echo 'apply                    push + run setup.sh (stack only)'
 	@echo 'apply-dev                push + run setup.sh with go/.NET toolchains'
 	@echo 'apply-podman             push + set up rootless podman'
+	@echo 'apply-chargecap          push + install the battery charge cap'
+	@echo 'build-chargecap          cross-build the chargecap daemon into ./'
 	@echo 'apply-all                push + stack + toolchains + podman'
 	@echo 'images                   build the sample Go and C# container images on the phone'
 	@echo 'verify                   health-check every endpoint and scrape target'
@@ -44,6 +46,17 @@ apply-dev: push
 
 apply-podman: push
 	@$(SSHT) 'sudo env WITH_PODMAN=1 SKIP_PKGS=$(SKIP_PKGS) sh $(REMOTE)/scripts/setup.sh'
+
+build-chargecap:
+	@sh scripts/build-chargecap.sh .
+
+# Expects pm6150_chg.ko and chargecap in the repo root: build them with
+# scripts/build-module.sh and make build-chargecap first.
+apply-chargecap: push
+	@test -f pm6150_chg.ko -a -f chargecap || { echo 'build pm6150_chg.ko and chargecap first (see kernel/pm6150-chg/README.md)'; exit 1; }
+	@$(SSH) 'mkdir -p $(REMOTE)'
+	@tar -czf - pm6150_chg.ko chargecap | $(SSH) 'tar -C $(REMOTE) -xzf -'
+	@$(SSHT) 'sudo env WITH_CHARGECAP=1 SKIP_PKGS=1 sh $(REMOTE)/scripts/setup.sh'
 
 apply-all: push
 	@$(SSHT) 'sudo env WITH_DEV=1 WITH_PODMAN=1 sh $(REMOTE)/scripts/setup.sh'

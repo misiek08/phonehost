@@ -1,0 +1,21 @@
+# Charge band for the phone's battery.
+#
+# Charging stops at CHARGECAP_UPPER and resumes at CHARGECAP_LOWER. Because
+# pm6150_chg's inhibit-charge leaves the USB input powering the phone, the
+# battery sits at 0 A inside the band - it does not cycle, so a narrow band
+# costs nothing.
+export CHARGECAP_UPPER=80
+export CHARGECAP_LOWER=75
+
+# Charging is always restored at or below this level, whatever the band says.
+export CHARGECAP_FLOOR=60
+
+# Descend into the band with force-discharge when the level is above it. With
+# "no" the daemon only stops charging from rising and waits for natural drain.
+export CHARGECAP_DESCEND=yes
+
+export CHARGECAP_INTERVAL_SECONDS=30
+# Local only: VictoriaMetrics scrapes it over loopback, so no firewall rule is
+# needed. Set 0.0.0.0 and open 9110 in the nft rule if you want it from the LAN.
+export CHARGECAP_LISTEN=127.0.0.1:9110
+#export CHARGECAP_SYSFS=/sys/class/power_supply/qcom_qg
