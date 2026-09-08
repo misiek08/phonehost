@@ -161,6 +161,15 @@ USB already clear) and `PON_REASON1 0x10`, i.e. the last power-on was a charger
 insertion - which is exactly the reported behaviour of a phone that will not stay
 off while plugged in.
 
+**Masking does not survive a power-off on this device.** Tested: the write takes
+effect at runtime (`0xe4` -> `0xa4`, verified by reading it back), the phone is
+powered off with `safe-poweroff.sh`, and it boots itself again ~45 s later with
+`TRIGGER_EN_at_load 0xe4` and `PON_REASON1 0x10` (usb-insertion). So either the
+PMIC resets the PON configuration during its power-on sequence or the bootloader
+reprograms it - Android relies on charger-insertion boots to reach off-mode
+charging. Nothing in Linux runs later than PS_HOLD dropping, so there is no
+Linux-side fix; to keep the phone off, unplug it.
+
 Masking clears USB|CBL|DC and verifies afterwards that KPD survived, restoring
 the register wholesale if it did not: a phone whose power key is not a power-on
 trigger cannot be switched on at all, and recovering that means opening it to

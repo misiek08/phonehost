@@ -10,12 +10,19 @@
 # "inhibit-charge" may sit there not charging at all. chargecap restores "auto"
 # when it stops, but this checks it rather than trusting it.
 #
-# It also masks the PMIC's cable power-on trigger, because otherwise the phone
-# switches itself back on the moment it is powered off with a charger connected:
-# CBL (external power supply) is a PON trigger and mainline has no off-mode
-# charging to land in. pm6150_chg re-arms it at every load, so the masking lasts
-# exactly until the next boot - a host that died on a flat battery still revives
-# when power comes back. --keep-cable-wakeup skips this.
+# It also masks the PMIC's cable power-on trigger (CBL in the PON block), which
+# is why a phone powered off with a charger connected switches straight back on.
+#
+# MEASURED: that masking does NOT work on this device. The write takes effect at
+# runtime (TRIGGER_EN 0xe4 -> 0xa4) but the register is back to 0xe4 before Linux
+# loads the module on the next boot, so either the PMIC resets the PON config in
+# its power-on sequence or the bootloader reprograms it - Android needs
+# charger-insertion boots for off-mode charging. Nothing in Linux runs later than
+# PS_HOLD dropping, so this cannot be fixed from here.
+#
+# To keep the phone off, unplug the cable. The masking is left in place because
+# it is harmless and costs nothing if a future bootloader stops overriding it.
+# --keep-cable-wakeup skips it.
 #
 # There is no wake-on-LAN here: after this, only the power button brings the
 # phone back.
@@ -85,9 +92,10 @@ if [ -e "$CW" ] && [ "$KEEP_WAKEUP" = 0 ]; then
 	else
 		echo 0 > "$CW" || true
 		if [ "$(cat "$CW")" = 0 ]; then
-			log "cable wakeup masked (re-armed automatically at the next boot)"
+			log "cable wakeup masked - but see the note below: it does not survive"
+			log "  power-off on this device, so a connected charger WILL boot it again"
 		else
-			log "could not mask cable wakeup - the charger may switch the phone back on"
+			log "could not mask cable wakeup - a connected charger will boot it again"
 		fi
 	fi
 elif [ "$KEEP_WAKEUP" = 1 ]; then
