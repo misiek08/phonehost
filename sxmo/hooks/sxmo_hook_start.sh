@@ -165,6 +165,11 @@ sxmo_migrate.sh state || sxmo_notify_user.sh --urgency=critical \
 # spinning in that blocking read.
 superctl stop sxmo_autosuspend 2>/dev/null || true
 
+# The status bar polls WiFi every 60 s (visible as ath10k "chan info" spam) to
+# draw an icon nobody looks at on a headless host with the panel off, and each
+# poll takes the radio off channel briefly.
+sxmo_jobs.sh stop statusbar_periodics 2>/dev/null || true
+
 # Blank the panel. The power button still wakes the session - this is a dark
 # screen, not a password barrier (dwm's locker is i3lock, which is not installed,
 # and the PAM stack here has no base-auth for it to use anyway).

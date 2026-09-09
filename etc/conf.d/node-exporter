@@ -1,7 +1,7 @@
 # /etc/conf.d/node-exporter
 
-# Custom arguments can be specified like:
-#
-# ARGS="--web.listen-address=':9100'"
-
-ARGS=""
+# The ath10k hwmon sensor is excluded: reading it makes the WiFi firmware do a
+# thermal read, which fails twice a minute ("failed to synchronize thermal
+# read") and pokes the radio for a number nothing here alerts on. Every thermal
+# zone the alerts do use (thermal_thermal_zone*) is still collected.
+ARGS="--collector.hwmon.chip-exclude=soc_0_18800000_wifi"

@@ -167,6 +167,42 @@ drops `/etc/profile.d/dev-toolchains.sh` (GOPATH, DOTNET_ROOT, telemetry off).
 Samples that read the battery from sysfs live in `dev/`. The .NET RID on Alpine is
 `linux-musl-arm64`, not `linux-arm64`.
 
+## The LAN link
+
+WiFi power save is **off** on this host, set in two places: `wifi.powersave=2`
+in `etc/NetworkManager/conf.d/10-no-wifi-powersave.conf` (applied when the
+connection activates) and the `wifi-powersave-off` OpenRC service, which runs
+`iw dev wlan0 set power_save off` after NetworkManager and also fixes an
+interface that came up before the setting was read.
+
+It was diagnosed after the phone stopped answering pings and Grafana while being
+perfectly healthy. The evidence, all of it from the host itself:
+
+* local scrapes ran 120/hour without a single gap for 14 h, and
+  `node_network_carrier_changes_total{device="wlan0"}` never moved off 2 - the
+  host was up and the link never dropped;
+* `dmesg`/logbookd showed no disconnect, roam or deauth in that window;
+* pings from the LAN measured min 3.1 ms, avg 71.7 ms, **max 180.5 ms** - the
+  radio was only awake on DTIM beacons, and ARP can be missed long enough for a
+  router to write the client off.
+
+After turning power save off: avg 4.8 ms, max 7.1 ms. The cost is roughly a tenth
+of a watt of idle draw, which this host, powered over USB, can spare.
+
+Two periodic pokes at the radio were removed at the same time, both pointless on
+a headless phone: node_exporter was reading the `ath10k_hwmon` sensor every 30 s
+(each read a firmware thermal request, failing twice a minute with "failed to
+synchronize thermal read"), now excluded via
+`--collector.hwmon.chip-exclude=soc_0_18800000_wifi`; and Sxmo's status bar was
+polling WiFi every 60 s to draw an icon on a panel that is switched off, now
+stopped from the session start hook.
+
+**Reading the system log:** `logbookd` keeps everything in RAM and only writes
+`/var/log/logbookd.db` when stopped or told to save, so after an incident the
+interesting hours are not on disk yet. `sudo rc-service logbookd save` flushes
+them; `etc/periodic/15min/logbookd-save` now does it on a schedule (crond is in
+the default runlevel) so a crash cannot take the evidence with it.
+
 ## Screen off, and never suspending
 
 The phone runs Sxmo (dwm) started by `tinydm`. Two things had to be arranged for

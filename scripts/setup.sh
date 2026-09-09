@@ -46,7 +46,7 @@ if [ "${SKIP_PKGS:-0}" != 1 ]; then
 			grafana grafana-openrc alertmanager alertmanager-openrc \
 			prometheus-node-exporter prometheus-node-exporter-openrc
 	fi
-	apk add --quiet sqlite curl "$@"
+	apk add --quiet sqlite curl iw "$@"
 
 	if [ "${WITH_PODMAN:-0}" = 1 ]; then
 		log "podman packages"
@@ -100,6 +100,16 @@ install -m 644 "$SRC/etc/conf.d/node-exporter"    /etc/conf.d/node-exporter
 install -m 644 "$SRC/etc/conf.d/alertmanager"     /etc/conf.d/alertmanager
 install -m 755 "$SRC/etc/init.d/vmalert"          /etc/init.d/vmalert
 install -m 755 "$SRC/etc/init.d/no-suspend"       /etc/init.d/no-suspend
+install -m 755 "$SRC/etc/init.d/wifi-powersave-off" /etc/init.d/wifi-powersave-off
+
+# WiFi power save makes this host unreachable from the LAN; see the file itself
+install -d -m 755 /etc/NetworkManager/conf.d
+install -m 644 "$SRC/etc/NetworkManager/conf.d/10-no-wifi-powersave.conf" \
+	/etc/NetworkManager/conf.d/10-no-wifi-powersave.conf
+
+# logbookd only writes its database when told to, so flush it on a schedule
+install -d -m 755 /etc/periodic/15min
+install -m 755 "$SRC/etc/periodic/15min/logbookd-save" /etc/periodic/15min/logbookd-save
 install -m 644 "$SRC/etc/victoria-metrics/scrape.yml" /etc/victoria-metrics/scrape.yml
 
 # rules: install ours, drop stale ones we no longer ship
@@ -247,10 +257,10 @@ fi
 
 # ---------------------------------------------------------------- services
 log "services"
-for s in no-suspend victoria-metrics node-exporter alertmanager vmalert grafana; do
+for s in no-suspend wifi-powersave-off crond victoria-metrics node-exporter alertmanager vmalert grafana; do
 	rc-update add "$s" default >/dev/null 2>&1 || true
 done
-for s in no-suspend victoria-metrics node-exporter alertmanager vmalert grafana; do
+for s in no-suspend wifi-powersave-off crond victoria-metrics node-exporter alertmanager vmalert grafana; do
 	rc-service "$s" restart >/dev/null 2>&1 || rc-service "$s" start
 done
 

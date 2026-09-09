@@ -1,0 +1,5 @@
+#!/bin/sh
+# logbookd keeps the system log in memory and only writes /var/log/logbookd.db
+# when it is stopped or told to save - so after an incident the interesting
+# hours are still in RAM, and a crash loses them entirely. Flush regularly.
+rc-service --quiet logbookd save 2>/dev/null || true

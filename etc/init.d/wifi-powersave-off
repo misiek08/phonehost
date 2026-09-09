@@ -1,0 +1,36 @@
+#!/sbin/openrc-run
+
+name="wifi power save"
+description="Turn WiFi power save off so the host stays responsive on the LAN"
+
+: ${wifi_powersave_iface:=wlan0}
+
+depend() {
+	need net
+	after networkmanager
+}
+
+start() {
+	if ! command -v iw >/dev/null 2>&1; then
+		ewarn "iw is not installed, leaving power save alone"
+		return 0
+	fi
+
+	# NetworkManager's wifi.powersave=2 already covers this on activation; the
+	# service is the belt to that pair of braces, and it also fixes an interface
+	# that came up before the setting was read.
+	ebegin "Disabling power save on $wifi_powersave_iface"
+	iw dev "$wifi_powersave_iface" set power_save off
+	eend $?
+}
+
+stop() {
+	return 0
+}
+
+status() {
+	if command -v iw >/dev/null 2>&1; then
+		einfo "$(iw dev "$wifi_powersave_iface" get power_save 2>&1)"
+	fi
+	return 0
+}
